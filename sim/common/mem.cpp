@@ -758,3 +758,32 @@ std::pair<uint64_t, uint8_t> MemoryUnit::page_table_walk(uint64_t vAddr_bits, AC
 }
 
 #endif
+
+// MEM DUMP HELPER (added for Vortex-UVM-GP verification)
+#ifdef MEM_DUMP_ENABLE
+#include <fstream>
+#include <sys/stat.h>
+
+void dump_raw_dmem(const uint8_t* mem_ptr, size_t mem_bytes, const std::string &out_path) {
+    // ensure directory exists (best-effort)
+    std::string dir;
+    auto pos = out_path.find_last_of('/');
+    if (pos != std::string::npos) dir = out_path.substr(0, pos);
+    if (!dir.empty()) {
+    #if defined(_WIN32)
+        _mkdir(dir.c_str());
+    #else
+        mkdir(dir.c_str(), 0755);
+    #endif
+    }
+    std::ofstream ofs(out_path, std::ios::binary);
+    if (!ofs) {
+        fprintf(stderr, "DMEM: failed to open %s for dump\n", out_path.c_str());
+        return;
+    }
+    ofs.write(reinterpret_cast<const char*>(mem_ptr), static_cast<std::streamsize>(mem_bytes));
+    ofs.close();
+    fprintf(stderr, "DMEM: dumped to %s (%zu bytes)\n", out_path.c_str(), mem_bytes);
+}
+#endif // MEM_DUMP_ENABLE
+

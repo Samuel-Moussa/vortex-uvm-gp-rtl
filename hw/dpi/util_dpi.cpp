@@ -15,10 +15,11 @@
 #include <math.h>
 #include <unordered_map>
 #include <vector>
-#include <mutex>
 #include <iostream>
 
 #include "svdpi.h"
+#include <cstdarg>
+#include <mutex>
 #include "verilated_vpi.h"
 
 #ifdef XLEN_64

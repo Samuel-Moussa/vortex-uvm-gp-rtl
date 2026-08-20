@@ -5,7 +5,7 @@ DESTDIR ?= $(CURDIR)
 CONFIG_FILE = $(DESTDIR)/rtlsim_config.stamp
 SRC_DIR = $(VORTEX_HOME)/sim/rtlsim
 
-CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
+CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds -DMEM_DUMP_ENABLE
 CXXFLAGS += -fPIC -Wno-maybe-uninitialized
 CXXFLAGS += -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR)
 CXXFLAGS += -I$(THIRD_PARTY_DIR)/softfloat/source/include

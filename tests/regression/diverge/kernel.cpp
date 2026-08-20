@@ -4,7 +4,13 @@
 #include "common.h"
 
 // Parallel Selection sort
+inline int my_min(int a, int b) {
+    return (a < b) ? a : b;
+}
 
+inline int my_max(int a, int b) {
+    return (a > b) ? a : b;
+}
 struct key_t {
 	uint32_t user = 0;
 };
@@ -86,10 +92,12 @@ void kernel_body(kernel_arg_t* __UNIFORM__ arg) {
 	// select
 	value += (task_id >= 0) ? ((task_id > 5) ? src_ptr[0] : task_id) : ((task_id < 5) ? src_ptr[1] : -task_id);
 
-	// min/max
-	value += std::min(src_ptr[task_id], value);
-	value += std::max(src_ptr[task_id], value);
-
+	// // min/max
+	// value += std::min(src_ptr[task_id], value);
+	// value += std::max(src_ptr[task_id], value);
+       value += my_min(src_ptr[task_id], value);
+       value += my_max(src_ptr[task_id], value);
+   
 	dst_ptr[task_id] = value;
 }
 

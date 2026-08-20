@@ -1,26 +1,3 @@
-# Copyright © 2019-2023
-# 
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-# http://www.apache.org/licenses/LICENSE-2.0
-# 
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-set SOURCE_FILES [glob *.lib]
-foreach FILE ${SOURCE_FILES} {
-    read_lib $FILE
-    redirect -variable CURR_LIB {get_lib}
-
-    set CURR_LIB [string range $CURR_LIB 2 end-3] 
-    set CURR_LIB [lindex  $CURR_LIB 0]
-    set FILENAME [string range $FILE 0 end-4]
-    write_lib $CURR_LIB -output ${FILENAME}.db
-    remove_lib $CURR_LIB
-}
-
-exit
+version https://git-lfs.github.com/spec/v1
+oid sha256:42314f9497334225a83acce5b9ed77ce147f0ca7e3f54b30b7c0dba73f34b6fe
+size 907

@@ -13,11 +13,13 @@
 
 #pragma once
 
+#include <deque>
 #include "mem_sim.h"
 #include "cache_sim.h"
 #include "constants.h"
 #include "dcrs.h"
 #include "cluster.h"
+#include "simx_cosim_record.h"
 
 namespace vortex {
 
@@ -37,8 +39,22 @@ public:
   void attach_ram(RAM* mem);
 
   int run();
-
+  void step(uint64_t cycles); // <--- ADD THIS
+  bool is_done() const;       // <--- ADD THIS to check status
+  int  get_exitcode() const;   // returns exit code after is_done() == true
+  
   void dcr_write(uint32_t addr, uint32_t value);
+
+  // M1 cosim retire-record queue (Option β)
+  void     cosim_push_retire(const simx_retire_t& rec) { cosim_log_.push_back(rec); }
+  bool     cosim_drain_retire(simx_retire_t& out) {
+    if (cosim_log_.empty()) return false;
+    out = cosim_log_.front();
+    cosim_log_.pop_front();
+    return true;
+  }
+  uint32_t cosim_pending() const { return static_cast<uint32_t>(cosim_log_.size()); }
+  void     cosim_clear() { cosim_log_.clear(); }
 
 #ifdef VM_ENABLE
   void set_satp(uint64_t satp);
@@ -59,6 +75,8 @@ private:
   uint64_t perf_mem_writes_;
   uint64_t perf_mem_latency_;
   uint64_t perf_mem_pending_reads_;
+  int      exitcode_;    // ADD: stores exit code when step() or run() finishes
+  std::deque<simx_retire_t> cosim_log_;  // M1: unbounded retire-record queue
 };
 
 }

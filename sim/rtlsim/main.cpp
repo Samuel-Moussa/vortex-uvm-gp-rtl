@@ -96,5 +96,25 @@ int main(int argc, char **argv) {
 	// read exitcode from @MPM.1
   ram.read(&exitcode, (IO_MPM_ADDR + 8), 4);
 
+
+
+#ifdef MEM_DUMP_ENABLE
+    // Dump final RTLSIM DMEM as raw bytes for binary comparison
+    try {
+        size_t sz = static_cast<size_t>(ram.size()); // replace .size() with .capacity() if your API uses that
+        if (sz > 0) {
+            std::vector<uint8_t> _tmpbuf(sz);
+            ram.read(_tmpbuf.data(), 0, static_cast<uint32_t>(sz));
+            dump_raw_dmem(_tmpbuf.data(), sz, "logs/dump_mem_0_rtlsim.bin");
+        }
+    } catch (...) {
+        fprintf(stderr, "RTLSIM: DMEM dump failed in main cleanup\n");
+    }
+#endif
+
+
+
+
+
 	return exitcode;
 }

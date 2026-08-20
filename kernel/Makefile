@@ -23,10 +23,22 @@ LLVM_CFLAGS += -Xclang -target-feature -Xclang +vortex -mllvm -vortex-branch-div
 #DP  = $(LLVM_VORTEX)/bin/llvm-objdump
 #CP  = $(LLVM_VORTEX)/bin/llvm-objcopy
 
+#CC  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-gcc
+#AR  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-gcc-ar
+#DP  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-objdump
+#CP  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-objcopy
+
+# --- Force 64-bit toolchain ---
+RISCV_TOOLCHAIN_PATH = /home/samuel_ubuntu22/tools/riscv64-gnu-toolchain
+RISCV_PREFIX = riscv64-unknown-elf
+
 CC  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-gcc
 AR  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-gcc-ar
 DP  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-objdump
 CP  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-objcopy
+
+
+
 
 CFLAGS += -O3 -mcmodel=medany -fno-exceptions -fdata-sections -ffunction-sections
 CFLAGS += -I$(INC_DIR) -I$(ROOT_DIR)/hw

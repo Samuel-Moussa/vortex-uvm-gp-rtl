@@ -10,3 +10,6 @@
 [submodule "third_party/hardfloat"]
 	path = third_party/hardfloat
 	url = https://github.com/bsg-external/HardFloat.git
+[submodule "build/core-v-verif"]
+	path = build/core-v-verif
+	url = https://github.com/openhwgroup/core-v-verif.git

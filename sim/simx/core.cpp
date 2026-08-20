@@ -22,6 +22,11 @@
 #include "core.h"
 #include "debug.h"
 #include "constants.h"
+#include "socket.h"
+#include "cluster.h"
+#include "processor_impl.h"
+#include "instr_trace.h"
+#include "simx_cosim_record.h"
 
 using namespace vortex;
 
@@ -219,6 +224,54 @@ void Core::schedule() {
   if (trace == nullptr) {
     ++perf_stats_.sched_idle;
     return;
+  }
+
+  // --- M1 cosim retire-record export (Option β) ---
+  // SimX commits the destination register inside Emulator::step(), so the
+  // register file holds the post-retire value here. Only emit records for
+  // writeback instructions; branches/stores/etc. are out of scope for M1.
+  if (trace->wb) {
+    simx_retire_t rec{};
+    rec.uuid  = trace->uuid;
+    rec.cid   = trace->cid;
+    rec.wid   = trace->wid;
+    rec.pc    = static_cast<uint64_t>(trace->PC);
+    rec.tmask = 0;
+    for (uint32_t t = 0, n = arch_.num_threads(); t < n && t < 32; ++t) {
+      if (trace->tmask.test(t)) rec.tmask |= (1u << t);
+    }
+    rec.wb    = 1;
+    rec.is_fp = (trace->dst_reg.type == RegType::Float) ? 1 : 0;
+    rec.rd    = static_cast<uint8_t>(trace->dst_reg.idx);
+    rec.sop   = trace->sop ? 1 : 0;
+    rec.eop   = trace->eop ? 1 : 0;
+    rec.fu_type = static_cast<uint8_t>(trace->fu_type);  // for lockstep: LSU load-data isn't on the DUT commit probe
+    rec.is_volatile = trace->volatile_result ? 1 : 0;    // perf-counter CSR read → excluded from lockstep compare
+    // Non-correctly-rounded FP op flag (OBS-014): the DUT hardware fsqrt.s is 1 ULP off
+    // the IEEE-correct SoftFloat result. Export FSQRT so the lockstep comparator can apply
+    // a DOCUMENTED, bounded 1-ULP tolerance to sqrt writebacks ONLY; all other FP ops
+    // (+,-,*,/,fma,cvt) stay bit-exact and any deviation there is still a hard failure.
+    rec.is_fsqrt = 0;
+    if (trace->fu_type == FUType::FPU) {
+      if (auto* fop = std::get_if<FpuType>(&trace->op_type))
+        rec.is_fsqrt = (*fop == FpuType::FSQRT) ? 1 : 0;
+    }
+    auto vals = emulator_.read_dst_reg(trace->wid, trace->dst_reg);
+    for (uint32_t t = 0, n = vals.size(); t < n && t < SIMX_COSIM_MAX_THREADS; ++t) {
+      rec.result[t] = vals[t];
+    }
+    // Per-thread effective LOAD address (OBS-002): lets the lockstep SB apply the
+    // same region filter as the end-state check before comparing load data. Only
+    // LSU traces carry LsuTraceData::mem_addrs; non-loads leave mem_addr[]=0.
+    if (trace->fu_type == FUType::LSU) {
+      auto lsu_data = std::dynamic_pointer_cast<LsuTraceData>(trace->data);
+      if (lsu_data) {
+        for (uint32_t t = 0, n = lsu_data->mem_addrs.size(); t < n && t < SIMX_COSIM_MAX_THREADS; ++t) {
+          rec.mem_addr[t] = lsu_data->mem_addrs[t].addr;
+        }
+      }
+    }
+    socket_->cluster()->processor()->cosim_push_retire(rec);
   }
 
   // suspend warp until decode

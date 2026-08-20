@@ -31,9 +31,15 @@ module VX_tcu_top import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     output tcu_res_t result_data,
     input wire result_ready
 );
+    // VX_execute_if #(
+    //     .data_t (tcu_exe_t)
+    // ) VX_execute_if();
+
+
     VX_execute_if #(
         .data_t (tcu_exe_t)
-    ) VX_execute_if();
+    ) execute_if();
+
 
     VX_result_if #(
         .data_t (tcu_res_t)

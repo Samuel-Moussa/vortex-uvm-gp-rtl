@@ -16,6 +16,8 @@
 
 `include "VX_define.vh"
 
+`include "VX_gpu_pkg.sv"
+
 package VX_fpu_pkg;
 
     import VX_gpu_pkg::*;

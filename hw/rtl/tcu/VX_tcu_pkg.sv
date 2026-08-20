@@ -15,10 +15,23 @@
 `define VX_TCU_PKG_VH
 
 `include "VX_define.vh"
+`include "VX_gpu_pkg.sv"
+//ADDED
+`include "VX_platform.vh"
+//`include "VX_trace_pkg.sv"
+
 
 package VX_tcu_pkg;
 
     import VX_gpu_pkg::*;
+
+        // ✅ ADD: Import DPI functions INSIDE package
+    `ifdef SIMULATION
+        import "DPI-C" function void dpi_trace(input int level, input string format);
+    `endif
+
+
+
 
     // Set configuration parameters
     localparam TCU_NT = `NUM_THREADS;
@@ -73,10 +86,17 @@ package VX_tcu_pkg;
     localparam TCU_NRB = (TCU_TILE_N * TCU_TILE_K) / TCU_NT;
     //localparam TCU_NRC = (TCU_TILE_M * TCU_TILE_N) / TCU_NT;
 
-    // Register base addresses
-    localparam TCU_RA = 0;
-    localparam TCU_RB = (TCU_NRB == 4) ? 28 : 10;
-    localparam TCU_RC = (TCU_NRB == 4) ? 10 : 24;
+    // // Register base addresses
+    // localparam TCU_RA = 0;
+    // localparam TCU_RB = (TCU_NRB == 4) ? 28 : 10;
+    // localparam TCU_RC = (TCU_NRB == 4) ? 10 : 24;
+
+
+        // Register base addresses
+    parameter TCU_RA = 0;
+    parameter TCU_RB = (TCU_NRB == 4) ? 28 : 10;
+    parameter TCU_RC = (TCU_NRB == 4) ? 10 : 24;
+
 
     localparam TCU_UOPS = TCU_M_STEPS * TCU_N_STEPS * TCU_K_STEPS;
 

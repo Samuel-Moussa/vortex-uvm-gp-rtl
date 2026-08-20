@@ -123,6 +123,23 @@ public:
   ~Impl() {
     this->cout_flush();
 
+
+if (ram_ != nullptr) {
+    std::string file_path = "dump_mem_0_rtlsim.bin";
+    std::cout << "[Vortex-UVM-GP] RTLSIM: Writing memory dump to " << file_path << std::endl;
+
+    std::ofstream ofs(file_path, std::ios::binary);
+    if (!ofs) {
+        std::cerr << "Error: could not open " << file_path << " for writing." << std::endl;
+    } else {
+        std::vector<uint8_t> buffer(ram_->size()); // allocate memory for full dump
+        ram_->read(buffer.data(), 0, ram_->size()); // ✅ correct order: (data, addr, size)
+        ofs.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        ofs.close();
+    }
+}
+
+
   #ifdef VCD_OUTPUT
     tfp_->close();
     delete tfp_;

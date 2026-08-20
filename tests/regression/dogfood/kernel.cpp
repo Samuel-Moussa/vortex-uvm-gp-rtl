@@ -3,6 +3,9 @@
 #include <math.h>
 #include "common.h"
 
+#include <algorithm>
+
+
 typedef void (*PFN_Kernel)(kernel_arg_t* __UNIFORM__ arg);
 
 inline float __ieee754_sqrtf (float x) {
@@ -323,9 +326,16 @@ void kernel_fclamp(kernel_arg_t* __UNIFORM__ arg) {
 	}
 }
 
+// inline int iclamp(int a, int b, int c) {
+//   return std::min(std::max(a, b), c);
+// }
+
 inline int iclamp(int a, int b, int c) {
-  return std::min(std::max(a, b), c);
+  int max_ab = (a > b) ? a : b;
+  int result = (max_ab < c) ? max_ab : c;
+  return result;
 }
+
 
 void kernel_iclamp(kernel_arg_t* __UNIFORM__ arg) {
 	auto count  = arg->task_size;
