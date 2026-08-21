@@ -107,10 +107,10 @@ libc64()
 
 pocl()
 {
-    wget $REPOSITORY/pocl/$OSVERSION/pocl2.tar.bz2
-    tar -xvf pocl2.tar.bz2
+    wget $REPOSITORY/pocl/$OSVERSION/pocl.tar.bz2
+    tar -xvf pocl.tar.bz2
     mkdir -p $TOOLDIR && rm -rf $TOOLDIR/pocl && mv pocl $TOOLDIR
-    rm -rf pocl2 pocl2.tar.bz2
+    rm -rf pocl pocl.tar.bz2
 }
 
 verilator()
