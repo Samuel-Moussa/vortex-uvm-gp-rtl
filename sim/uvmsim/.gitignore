@@ -1,0 +1,25 @@
+# Simulator scratch / build / run output — this repo's parent .gitignore
+# rules do not reach inside a submodule, so this directory needs its own.
+work/
+results/
+cov/
+trace/
+transcript
+*.vstf
+*.ucdb
+*.so
+*.wlf
+*.mti
+*.cr.mti
+modelsim.ini*
+__pycache__/
+*.pyc
+graphify-out/
+backup/
+backups/
+*.bak
+tr_db.log
+ramulator*.log
+ramulator*.stats*
+.kernel_config.stamp
+local.mk
