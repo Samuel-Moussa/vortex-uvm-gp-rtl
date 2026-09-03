@@ -127,15 +127,6 @@ fi
 # terminal without editing this script, e.g.
 #   EXTRA_PLUSARGS="+L2CACHE" make sim ...
 # Empty by default => byte-identical. Appended last so it can override.
-# riscvISACOV bank (ISACOV=1): the binds live inside vortex_isacov_top, which
-# must be elaborated as a SECOND top. A file-scope bind would sit in a $unit
-# nothing instantiates and would be silently dropped. Empty unless ISACOV=1, so
-# every default run keeps the exact same vsim command line.
-ISACOV_TOP=""
-if [[ "${ISACOV:-0}" == "1" ]]; then
-    ISACOV_TOP="vortex_isacov_top"
-fi
-
 if [[ -n "${EXTRA_PLUSARGS:-}" ]]; then
     SIM_OPTS="$SIM_OPTS $EXTRA_PLUSARGS"
     print_info "Extra plusargs: $EXTRA_PLUSARGS"
@@ -166,10 +157,10 @@ if [[ "$SIMULATOR" == "questa" ]]; then
     export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
 
     if [[ $GUI_MODE -eq 1 ]]; then
-        vsim -coverage vortex_tb_top $ISACOV_TOP $SIM_OPTS $DPI_FLAG \
+        vsim -coverage vortex_tb_top $SIM_OPTS $DPI_FLAG \
             -do "add wave -r /*; run -all"
     else
-        vsim -coverage -c vortex_tb_top $ISACOV_TOP $SIM_OPTS $DPI_FLAG \
+        vsim -coverage -c vortex_tb_top $SIM_OPTS $DPI_FLAG \
             -onfinish stop \
             -do "run -all; coverage save -testname ${TEST_NAME}_${PROG_SHORT} $RESULTS_RUN_DIR/reports/coverage.ucdb; quit -f" \
             2>&1 | tee "$LOG_FILE"

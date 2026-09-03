@@ -1088,6 +1088,38 @@ module vortex_tb_top;
         .perf_mshr_stall(perf_mshr_stall)
     );
 
+`ifdef ISACOV
+    // ---- riscvISACOV bank (opt-in: compiled only when ISACOV=1) ------------
+    // Independent third-party RV32I ISA functional-coverage model (Imperas,
+    // Apache-2.0, used UNMODIFIED from third_party/riscvISACOV).
+    // These binds MUST live inside this module. A bind at file scope sits in a
+    // $unit that nothing instantiates, so Questa never elaborates it and the
+    // binds are silently dropped -- measured, not assumed: the first
+    // integration run passed cleanly and produced ZERO [ISACOV] output. Placing
+    // them here keeps vortex_tb_top the single elaboration top.
+    //
+    // Both probes are strictly passive and both are additionally gated at
+    // runtime by +ISACOV, so an ISACOV=1 build without the plusarg is still
+    // byte-identical to a default run.
+
+    // Fetch-stage instruction-word observer. Cross-checks the objdump-derived
+    // disassembly map against the words the DUT actually fetched, so a stale
+    // ELF cannot silently fabricate ISA coverage.
+    bind VX_fetch vx_instr_word_probe u_instr_word_probe (
+        .clk     (clk),
+        .reset   (reset),
+        .fetch_if(fetch_if)
+    );
+
+    // Retirement -> RVVI-TRACE -> riscvISACOV. One model per core; lane-as-hart
+    // by default (+ISACOV_MODE=B for lane 0 only).
+    bind VX_commit vortex_rvvi_shim u_rvvi_shim (
+        .clk          (clk),
+        .reset        (reset),
+        .commit_arb_if(commit_arb_if)
+    );
+`endif
+
 
     //==========================================================================
     // SIMULATION COMPLETION

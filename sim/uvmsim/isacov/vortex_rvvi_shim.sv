@@ -8,19 +8,46 @@
 // model per CORE), so per-core attribution comes from the UCDB hierarchy path
 // exactly as it does for the existing probes.
 //
-// OPTION B (this file): hart = core, and only SIMD LANE 0 (thread 0) is
-// sampled.  Rationale from the handover: start where a miscompare is
-// attributable.  Lane 0 is the lane that always exists -- vx_start.S:41-42
-// boots with tmask = 1 -- so it can never be an inactive lane whose register
-// values are undefined.  Option A (lane-as-hart, NHART = threads) is the next
-// step and needs tmask suppression or coverage inflates silently.
+// TWO SAMPLING MODES, selected at RUNTIME by +ISACOV_MODE=<A|B>:
+//
+//   A (default) -- LANE AS HART.  NHART = `NUM_THREADS and every ACTIVE SIMT
+//       lane is sampled as its own hart.  This is the mode that reflects what
+//       the GPU actually executed: the four lanes of a warp run the same PC
+//       over DIFFERENT data, so lanes 1..3 contribute real operand and
+//       register-value diversity that lane 0 alone never sees.
+//
+//   B -- LANE 0 ONLY.  The conservative baseline: one hart, thread 0.  Kept
+//       because it is the mode in which any miscompare is trivially
+//       attributable, and because it is the honest "no SIMT credit" number to
+//       report alongside A.
+//
+// tmask GATING IS MANDATORY, NOT AN OPTIMISATION.  An inactive lane's `data`
+// slot holds whatever the datapath last left there -- it is NOT an
+// architectural result.  Sampling it would push junk into every REG_VALUE /
+// REG_VALUE_SIGN coverpoint and inflate coverage silently, which is precisely
+// the OBS-029 failure class (a green run that verified nothing).  Only
+// tmask[l] == 1 lanes are ever sampled.
+//
+// HART NUMBERING.  commit_t carries ONE SIMD group per beat: `tmask` and
+// `data` are `SIMD_WIDTH wide and `sid` is the group index
+// (VX_gpu_pkg.sv:651-663), so a warp of `NUM_THREADS retires over
+// `NUM_THREADS/`SIMD_WIDTH beats.  The hart id is therefore
+//     hart = sid * `SIMD_WIDTH + lane
+// and EVERY beat is sampled -- not just sop.  Gating on sop would silently
+// drop every SIMD group above the first whenever SIMD_WIDTH < NUM_THREADS.
+//
+// riscvISACOV keeps its trace queue PER HART (traceDataQ[hart]), so mapping
+// lanes onto harts is also what keeps a future EXTENDED-level REG_HAZARD
+// analysis honest -- folding four lanes into hart 0 would fabricate hazards
+// between threads that never had a dependency.
 //
 // WHAT DRIVES THE MODEL
 //   riscvISACOV keys on DISASSEMBLY TEXT, not on the instruction word
 //   (RISCV_coverage_base.svh:1381).  The text comes from isacov_pkg's static
 //   PC->text map built by gen_disass_map.sh from the kernel's own objdump.
-//   A PC with no map entry yields "" which matches no covergroup -- that is the
-//   correct behaviour for Vortex custom ops, which objdump renders as `.insn`.
+//   A PC with no map entry yields "" which matches no covergroup -- the
+//   correct behaviour for Vortex custom ops, which objdump renders as `.insn`
+//   and which are covered by OUR collector instead (vx_instr_probe).
 //
 // rvviTrace fields are all `wire` (rvviTrace.sv:67-104), so they must be
 // DRIVEN by continuous assignment from registered state -- a class cannot
@@ -36,73 +63,124 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
     input wire reset,
     VX_commit_if commit_arb_if [`ISSUE_WIDTH]     // read-only: no modport
 );
-    localparam int ILEN=32, XLEN=32, FLEN=32, VLEN=256, NHART=1, RETIRE=1;
+    localparam int ILEN=32, XLEN=32, FLEN=32, VLEN=256;
+    localparam int LANES = `SIMD_WIDTH;           // lanes per commit beat
+    localparam int NHART = `NUM_THREADS;          // one hart per SIMT lane
+    localparam int RETIRE = 1;
 
     rvviTrace #(ILEN, XLEN, FLEN, VLEN, NHART, RETIRE) rvvi();
 
-    logic                  r_valid   = 1'b0;
-    logic [63:0]           r_order   = '0;
-    logic [ILEN-1:0]       r_insn    = '0;
-    logic [XLEN-1:0]       r_pc      = '0;
-    logic [31:0]           r_x_wb    = '0;
-    logic [31:0][XLEN-1:0] r_x_wdata = '0;
+    logic                  r_valid   [NHART];
+    logic [63:0]           r_order   [NHART];
+    logic [ILEN-1:0]       r_insn    [NHART];
+    logic [XLEN-1:0]       r_pc      [NHART];
+    logic [31:0]           r_x_wb    [NHART];
 
-    assign rvvi.clk               = clk;
-    assign rvvi.valid[0][0]       = r_valid;
-    assign rvvi.order[0][0]       = r_order;
-    assign rvvi.insn[0][0]        = r_insn;
-    assign rvvi.pc_rdata[0][0]    = r_pc;
-    assign rvvi.x_wb[0][0]        = r_x_wb;
-    assign rvvi.x_wdata[0][0]     = r_x_wdata;
-    assign rvvi.trap[0][0]        = 1'b0;      // Vortex has no trap architecture
-    assign rvvi.halt[0][0]        = 1'b0;
-    assign rvvi.intr[0][0]        = 1'b0;
-    assign rvvi.mode[0][0]        = 2'b11;     // M-mode only
-    assign rvvi.ixl[0][0]         = 2'b01;     // XLEN=32
-    assign rvvi.pc_wdata[0][0]    = '0;
-    assign rvvi.f_wb[0][0]        = '0;
-    assign rvvi.f_wdata[0][0]     = '0;
-    assign rvvi.v_wb[0][0]        = '0;
-    assign rvvi.v_wdata[0][0]     = '0;
-    assign rvvi.csr_wb[0][0]      = '0;
-    assign rvvi.csr[0][0]         = '0;
-    assign rvvi.lrsc_cancel[0][0] = 1'b0;
-    assign rvvi.debug_mode[0][0]  = 1'b0;
-    assign rvvi.mode_virt         = 1'b0;
+    // x_wdata is a FULL 32-REGISTER SNAPSHOT, not "the value written this
+    // cycle". RVVI defines x_wdata[r] as register r's current value and x_wb[r]
+    // as the flag that r changed on THIS retirement, and riscvISACOV depends on
+    // that: RISCV_instruction_base.svh:444 reads
+    //     current.rs1_val = prev.x_wdata[rs1]
+    // i.e. source-operand values come from the PREVIOUS retirement's snapshot.
+    //
+    // Driving only the rd slot (the obvious-looking shortcut) makes every
+    // source operand read as 0, so cp_rs1_sign / cp_rs2_sign can only ever hit
+    // their `zero` bin and every REG_VALUE coverpoint is fed a constant. That
+    // is not a stimulus gap, it is fabricated data -- and it is invisible,
+    // because the run still passes and coverage still moves. Measured: with the
+    // shortcut, lane-as-hart (4,581 samples) scored EXACTLY the same as lane 0
+    // alone (1,677), because the only lane-varying quantity left was rd's sign.
+    //
+    // So each hart carries its own architectural register file, updated on
+    // every writeback. Per-hart is correct for SIMT: each thread has its own
+    // registers.
+    logic [31:0][XLEN-1:0] r_x_wdata [NHART];
+
+    assign rvvi.clk = clk;
+    for (genvar h = 0; h < NHART; ++h) begin : g_hart
+        initial begin
+            r_valid[h] = 1'b0; r_order[h] = '0; r_insn[h] = '0;
+            r_pc[h] = '0; r_x_wb[h] = '0; r_x_wdata[h] = '0;
+        end
+        assign rvvi.valid[h][0]       = r_valid[h];
+        assign rvvi.order[h][0]       = r_order[h];
+        assign rvvi.insn[h][0]        = r_insn[h];
+        assign rvvi.pc_rdata[h][0]    = r_pc[h];
+        assign rvvi.x_wb[h][0]        = r_x_wb[h];
+        assign rvvi.x_wdata[h][0]     = r_x_wdata[h];
+        assign rvvi.trap[h][0]        = 1'b0;   // Vortex has no trap architecture
+        assign rvvi.halt[h][0]        = 1'b0;
+        assign rvvi.intr[h][0]        = 1'b0;
+        assign rvvi.mode[h][0]        = 2'b11;  // M-mode only
+        assign rvvi.ixl[h][0]         = 2'b01;  // XLEN=32
+        assign rvvi.pc_wdata[h][0]    = '0;
+        assign rvvi.f_wb[h][0]        = '0;
+        assign rvvi.f_wdata[h][0]     = '0;
+        assign rvvi.v_wb[h][0]        = '0;
+        assign rvvi.v_wdata[h][0]     = '0;
+        assign rvvi.csr_wb[h][0]      = '0;
+        assign rvvi.csr[h][0]         = '0;
+        assign rvvi.lrsc_cancel[h][0] = 1'b0;
+        assign rvvi.debug_mode[h][0]  = 1'b0;
+    end
+    assign rvvi.mode_virt = 1'b0;
 
     coverage #(ILEN, XLEN, FLEN, VLEN, NHART, RETIRE) cov;
     initial cov = new(rvvi);
 
-    // One shim per core; only issue lane 0 is wired.  With ISSUE_WIDTH > 1 the
-    // remaining lanes are deliberately not sampled yet -- they need their own
-    // rvviTrace slot (RETIRE > 1), which is Option A work, not a silent drop.
+    // Mode select. Default A (all active lanes); +ISACOV_MODE=B restricts to
+    // lane 0. One elaboration serves both, so A and B are directly comparable
+    // on an otherwise identical build.
+    string isacov_mode = "A";
+    initial begin
+        string m;
+        if ($value$plusargs("ISACOV_MODE=%s", m)) isacov_mode = m;
+    end
+
+    // One shim per core; only issue lane 0 of the commit arbiter is wired.
+    // With ISSUE_WIDTH > 1 the other issue lanes need their own RETIRE slot;
+    // that is a deliberate, stated gap, not a silent drop.
     wire retire_fire = commit_arb_if[0].valid && commit_arb_if[0].ready;
 
     longint unsigned n_shim_sampled = 0;   // liveness
 
     always @(posedge clk) begin
-        if (isacov_pkg::isacov_en && !reset && retire_fire
-                && commit_arb_if[0].data.sop            // one sample per instruction
-                && commit_arb_if[0].data.tmask[0]) begin // lane 0 actually active
+        if (isacov_pkg::isacov_en && !reset && retire_fire) begin
             string d;
-            r_pc      = to_fullPC(commit_arb_if[0].data.PC);
-            d         = isacov_pkg::lookup(r_pc);
-            r_insn    = isacov_pkg::word_map.exists(r_pc) ? isacov_pkg::word_map[r_pc] : '0;
-            r_x_wdata = '0;
-            r_x_wb    = '0;
-            if (commit_arb_if[0].data.wb && commit_arb_if[0].data.rd != 0) begin
-                r_x_wb = (32'b1 << commit_arb_if[0].data.rd);
-                r_x_wdata[commit_arb_if[0].data.rd] = commit_arb_if[0].data.data[0][XLEN-1:0];
-            end
-            r_valid = 1'b1;
-            r_order = r_order + 1;
+            logic [XLEN-1:0] pc;
+            int base, h;
+            pc   = to_fullPC(commit_arb_if[0].data.PC);
+            d    = isacov_pkg::lookup(pc);
+            base = int'(commit_arb_if[0].data.sid) * LANES;
             if (d.len() != 0) begin
-                cov.sample(1'b0, 0, 0, d);
-                isacov_pkg::n_sampled++;
-                n_shim_sampled++;
+                for (int l = 0; l < LANES; l++) begin
+                    h = base + l;
+                    if (h >= NHART) continue;
+                    if (!commit_arb_if[0].data.tmask[l]) continue;   // inactive lane
+                    if (isacov_mode == "B" && h != 0) continue;      // mode B: lane 0 only
+                    r_pc[h]   = pc;
+                    r_insn[h] = isacov_pkg::word_map.exists(pc) ? isacov_pkg::word_map[pc] : '0;
+                    // Update the snapshot IN PLACE -- it must persist across
+                    // retirements, so it is never cleared. x0 is hardwired zero
+                    // and is excluded from the writeback flag.
+                    r_x_wb[h] = '0;
+                    if (commit_arb_if[0].data.wb && commit_arb_if[0].data.rd != 0) begin
+                        r_x_wb[h] = (32'b1 << commit_arb_if[0].data.rd);
+                        r_x_wdata[h][commit_arb_if[0].data.rd] = commit_arb_if[0].data.data[l];
+                    end
+                    r_valid[h] = 1'b1;
+                    r_order[h] = r_order[h] + 1;
+                    cov.sample(1'b0, h, 0, d);
+                    isacov_pkg::n_sampled++;
+                    n_shim_sampled++;
+                    r_valid[h] = 1'b0;
+                end
             end
-            r_valid = 1'b0;
         end
     end
+
+    final if (isacov_pkg::isacov_en)
+        $display("[ISACOV] %m mode=%s NHART=%0d LANES=%0d sampled=%0d",
+                 isacov_mode, NHART, LANES, n_shim_sampled);
 
 endmodule : vortex_rvvi_shim

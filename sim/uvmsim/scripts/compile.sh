@@ -103,6 +103,14 @@ if [[ $NO_COMPILE -eq 0 ]]; then
     [[ "${ENABLE_DCACHE:-1}" == "0" ]] && COMPILE_OPTS="$COMPILE_OPTS +define+DCACHE_DISABLE"
     print_info "Caches: icache=${ENABLE_ICACHE:-1} dcache=${ENABLE_DCACHE:-1} L2=${ENABLE_L2:-0} L3=${ENABLE_L3:-0}"
 
+    # riscvISACOV bank (opt-in). The define gates the two binds inside
+    # vortex_tb_top; it must be set for the UVM/TB compile, not just for the
+    # isacov compile unit, because that is where the binds live.
+    if [[ "${ISACOV:-0}" == "1" ]]; then
+        COMPILE_OPTS="$COMPILE_OPTS +define+ISACOV"
+        print_info "riscvISACOV: enabled (+define+ISACOV)"
+    fi
+
     # Escape hatch for any OTHER non-default RTL define, without editing this script:
     #   EXTRA_RTL_DEFINES="+define+DCACHE_WRITEBACK=1" make sim ...
     # Empty by default => byte-identical. Appended last so it can override the above.
