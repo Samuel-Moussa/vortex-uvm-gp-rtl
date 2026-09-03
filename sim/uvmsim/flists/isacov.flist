@@ -1,0 +1,13 @@
+# riscvISACOV bank -- compiled ONLY when ISACOV=1. Order matters:
+# stub packages -> RVVI -> our package -> probes -> binds.
++incdir+$VORTEX_HOME/hw/rtl
++incdir+$VORTEX_HOME/hw/rtl/core
++incdir+$VORTEX_HOME/hw/rtl/interfaces
+
+$VORTEX_UVM_HOME/isacov/idv_stubs.sv
+$VORTEX_ISACOV_RVVI/rvviApiPkg.sv
+$VORTEX_ISACOV_RVVI/rvviTrace.sv
+$VORTEX_UVM_HOME/isacov/isacov_pkg.sv
+$VORTEX_UVM_HOME/isacov/vx_instr_word_probe.sv
+$VORTEX_UVM_HOME/isacov/vortex_rvvi_shim.sv
+$VORTEX_UVM_HOME/isacov/isacov_binds.sv

@@ -160,6 +160,24 @@ if [[ $NO_COMPILE -eq 0 ]]; then
             2>&1 | tee -a "$RESULTS_RUN_DIR/logs/compile_uvm.log"
     fi
 
+    # ---- riscvISACOV bank (opt-in: ISACOV=1) --------------------------------
+    # Independent third-party RV32I ISA functional-coverage model (Imperas,
+    # Apache-2.0, used UNMODIFIED from third_party/riscvISACOV). Adds two
+    # passive binds (fetch instruction-word probe + RVVI shim). OFF by default,
+    # so every existing bank and every default run is byte-identical.
+    if [[ "${ISACOV:-0}" == "1" ]]; then
+        print_info "Compiling riscvISACOV RV32I coverage bank..."
+        ISACOV_ROOT="${ISACOV_ROOT:-$VORTEX_HOME/../third_party}"
+        export VORTEX_ISACOV_RVVI="$ISACOV_ROOT/RVVI/source/host/rvvi"
+        vlog -sv $COMPILE_OPTS \
+            +incdir+"$VORTEX_UVM_HOME/isacov/shadow" \
+            +incdir+"$ISACOV_ROOT/riscvISACOV/source" \
+            +define+COVER_BASE_RV32I +define+COVER_RV32I +define+COVER_LEVEL_BASIC \
+            -f isacov.flist \
+            2>&1 | tee -a "$RESULTS_RUN_DIR/logs/compile_isacov.log"
+        if [[ ${PIPESTATUS[0]} -ne 0 ]]; then print_error "riscvISACOV compilation failed"; exit 1; fi
+        print_success "riscvISACOV compiled"
+    fi
 
 else
     print_header "Skipping Compilation"
