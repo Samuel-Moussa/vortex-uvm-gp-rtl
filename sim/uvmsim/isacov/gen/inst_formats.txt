@@ -83,3 +83,37 @@ csrrci  = rd,csr,imm
 
 # --- RV32Zifencei ---
 fence.i = none
+
+# --- RV32F: operand order from real objdump -M numeric,no-aliases output.
+# The rounding-mode operand is printed ONLY when it is not `dyn`, e.g.
+#   fadd.s f9,f15,f14           <- rm omitted => encoded rm = dyn (0b111)
+#   fcvt.w.s x15,f15,rtz        <- rm explicit
+# ops[] is a fixed ops_t[6] (RISCV_instruction_base.svh:33), so reading the
+# absent slot is safe and yields "", which get_frm() maps to `dyn` -- exactly
+# what the encoding means. So fp_rm is listed at its position unconditionally.
+fadd.s    = fd,fs1,fs2,fp_rm
+fsub.s    = fd,fs1,fs2,fp_rm
+fmul.s    = fd,fs1,fs2,fp_rm
+fdiv.s    = fd,fs1,fs2,fp_rm
+fsqrt.s   = fd,fs1,fp_rm
+fmadd.s   = fd,fs1,fs2,fs3,fp_rm
+fmsub.s   = fd,fs1,fs2,fs3,fp_rm
+fnmadd.s  = fd,fs1,fs2,fs3,fp_rm
+fnmsub.s  = fd,fs1,fs2,fs3,fp_rm
+fmin.s    = fd,fs1,fs2
+fmax.s    = fd,fs1,fs2
+fsgnj.s   = fd,fs1,fs2
+fsgnjn.s  = fd,fs1,fs2
+fsgnjx.s  = fd,fs1,fs2
+feq.s     = rd,fs1,fs2
+flt.s     = rd,fs1,fs2
+fle.s     = rd,fs1,fs2
+fclass.s  = rd,fs1
+fcvt.w.s  = rd,fs1,fp_rm
+fcvt.wu.s = rd,fs1,fp_rm
+fcvt.s.w  = fd,rs1,fp_rm
+fcvt.s.wu = fd,rs1,fp_rm
+fmv.w.x   = fd,rs1
+fmv.x.w   = rd,fs1
+flw       = fd,imm,rs1 | load
+fsw       = fs2,imm,rs1 | store

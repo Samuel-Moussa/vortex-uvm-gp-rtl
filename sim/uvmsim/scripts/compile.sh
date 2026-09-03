@@ -193,6 +193,16 @@ if [[ $NO_COMPILE -eq 0 ]]; then
             ISACOV_EXT_DEFS="$ISACOV_EXT_DEFS +define+COVER_$(echo "$e" | tr '[:lower:]' '[:upper:]')"
         done
         print_info "riscvISACOV extensions: $ISACOV_EXTS"
+        # Build the RVVI CSR-index DPI if it is missing or older than its source.
+        # Plain C on purpose: QuestaSim ships its own gcc-7.4 libstdc++, so a C++
+        # build fails to load with `GLIBCXX_3.4.29 not found`.
+        ISACOV_DPI_SRC="$VORTEX_UVM_HOME/isacov/isacov_dpi.c"
+        ISACOV_DPI_SO="$VORTEX_UVM_HOME/isacov/isacov_dpi.so"
+        if [[ ! -f "$ISACOV_DPI_SO" || "$ISACOV_DPI_SRC" -nt "$ISACOV_DPI_SO" ]]; then
+            gcc -shared -fPIC -O2 -o "$ISACOV_DPI_SO" "$ISACOV_DPI_SRC" || {
+                print_error "riscvISACOV DPI build failed"; exit 1; }
+            print_success "riscvISACOV DPI built"
+        fi
         export VORTEX_ISACOV_RVVI="$ISACOV_ROOT/RVVI/source/host/rvvi"
         vlog -sv $COMPILE_OPTS \
             +incdir+"$VORTEX_UVM_HOME/isacov/shadow" \

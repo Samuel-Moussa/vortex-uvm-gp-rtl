@@ -32,6 +32,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "..", "third_p
 # Cosmetic: they affect no bin, no coverpoint and no coverage number.
 # ---------------------------------------------------------------------------
 LONG_NAMES = {}
+SKIP_CPS  = set()
 FORMATS   = {}   # mnemonic -> ([operands], "load"|"store"|None)
 
 # Coverpoint refinements that the dvplan CANNOT express. The CSV records that
@@ -76,7 +77,12 @@ def t_asm_count(cp, op, desc, mn, extra=""):
             f'{IND}}}\n')
 
 def t_reg_assign(cp, op, desc, mn, extra=""):
-    return (f'{IND}{cp} : coverpoint ins.get_gpr_reg(ins.current.{op})  iff (ins.trap == 0 )  {{\n'
+    # fd/fs1/fs2/fs3 are FLOAT registers and need get_fpr_reg, which returns the
+    # fpr_name_t enum (RISCV_instruction_base.svh:263). Using get_gpr_reg on them
+    # is not a silent mis-binning -- get_gpr_reg calls $stop with
+    # "get_gpr_reg(f8) not found gpr" and halts the run. Measured.
+    getter = "get_fpr_reg" if op.startswith("f") else "get_gpr_reg"
+    return (f'{IND}{cp} : coverpoint ins.{getter}(ins.current.{op})  iff (ins.trap == 0 )  {{\n'
             f'{IND}    option.comment = "{desc}";\n'
             f'{extra}'
             f'{IND}}}\n')
@@ -128,7 +134,10 @@ def t_reg_value_toggle(cp, op, desc, mn, extra=""):
             f'{IND}}}\n')
 
 def t_reg_hazard(cp, op, desc, mn, extra=""):
-    return (f'{IND}{cp} : coverpoint check_gpr_hazards(ins.hart, ins.issue)  iff (ins.trap == 0 )  {{\n'
+    # cp_reg_hazards -> integer file; cp_freg_hazards -> float file
+    # (RISCV_coverage_hazards.svh:36 / :54).
+    fn = "check_fpr_hazards" if cp == "cp_freg_hazards" else "check_gpr_hazards"
+    return (f'{IND}{cp} : coverpoint {fn}(ins.hart, ins.issue)  iff (ins.trap == 0 )  {{\n'
             f'{IND}    option.comment = "{desc}";\n'
             f'{IND}}}\n')
 
@@ -162,7 +171,75 @@ def t_instr_divide(cp, op, desc, mn, extra=""):
             f'{IND}    bins div_by_zero = {{2\'b10}};\n'
             f'{IND}}}\n')
 
+# Significant floating-point values, binary32. NOTE: unlike the nine templates
+# above, REG_FPVALUE / FP_RM / FP_FFLAG have NO reference implementation -- no
+# published riscvISACOV source contains them -- so they are NOT validated by the
+# RV32I byte-diff. These bins are OURS, chosen from IEEE-754 binary32's special
+# encodings, and must be labelled as such wherever the numbers are quoted.
+FPVALUE_BINS = (
+    f"{IND}    bins pos_zero    = {{32'h00000000}};\n"
+    f"{IND}    bins neg_zero    = {{32'h80000000}};\n"
+    f"{IND}    bins pos_one     = {{32'h3F800000}};\n"
+    f"{IND}    bins neg_one     = {{32'hBF800000}};\n"
+    f"{IND}    bins pos_inf     = {{32'h7F800000}};\n"
+    f"{IND}    bins neg_inf     = {{32'hFF800000}};\n"
+    f"{IND}    bins pos_min_sub = {{32'h00000001}};\n"
+    f"{IND}    bins neg_min_sub = {{32'h80000001}};\n"
+    f"{IND}    bins pos_max_sub = {{32'h007FFFFF}};\n"
+    f"{IND}    bins pos_min_nrm = {{32'h00800000}};\n"
+    f"{IND}    bins pos_max_nrm = {{32'h7F7FFFFF}};\n"
+    f"{IND}    bins neg_max_nrm = {{32'hFF7FFFFF}};\n"
+    f"{IND}    bins qnan        = {{[32'h7FC00000 : 32'h7FFFFFFF]}};\n"
+    f"{IND}    bins snan        = {{[32'h7F800001 : 32'h7FBFFFFF]}};\n"
+    f"{IND}    bins pos_other   = default;\n"
+)
+
+def t_reg_fpvalue(cp, op, desc, mn, extra=""):
+    return (f"{IND}{cp} : coverpoint uint32_t'(ins.current.{op}_val)  iff (ins.trap == 0 )  {{\n"
+            f'{IND}    option.comment = "{desc}";\n'
+            f'{FPVALUE_BINS}'
+            f'{IND}}}\n')
+
+def t_fp_rm(cp, op, desc, mn, extra=""):
+    # cp_rm  : the rounding mode ENCODED IN THE INSTRUCTION, recovered from the
+    #          disassembly operand by the shipped get_frm() (RISCV_coverage_common
+    #          .svh:559). An omitted operand is `dyn`, which is exactly what the
+    #          RISC-V encoding means, so the default arm is correct, not a fallback.
+    # cp_frm / cr_rm_frm : the DYNAMIC mode, read from the frm CSR. Those need a
+    #          driven rvvi.csr[] and are refused here rather than silently emitted
+    #          against an undriven signal -- see the guard below.
+    if cp == "cp_rm":
+        return (f'{IND}{cp} : coverpoint get_frm(ins.current.fp_rm)  iff (ins.trap == 0 )  {{\n'
+                f'{IND}    option.comment = "{desc}";\n'
+                f'{IND}}}\n')
+    if cp == "cp_frm":
+        return (f'{IND}{cp} : coverpoint get_csr_frm(int\'(get_csr_val(ins.hart, ins.issue, '
+                f'`SAMPLE_AFTER, "frm", "frm")))  iff (ins.trap == 0 )  {{\n'
+                f'{IND}    option.comment = "{desc}";\n'
+                f'{IND}}}\n')
+    if cp == "cr_rm_frm":
+        return (f'{IND}{cp} : cross cp_rm, cp_frm iff (ins.trap == 0 )  {{\n'
+                f'{IND}    option.comment = "{desc}";\n'
+                f'{IND}}}\n')
+    sys.exit(f"FP_RM: unrecognised coverpoint name '{cp}'")
+
+def t_fp_fflag(cp, op, desc, mn, extra=""):
+    return (f'{IND}{cp} : coverpoint get_csr_val(ins.hart, ins.issue, `SAMPLE_AFTER, '
+            f'"fflags", "fflags")  iff (ins.trap == 0 )  {{\n'
+            f'{IND}    option.comment = "{desc}";\n'
+            f"{IND}    bins none = {{0}};\n"
+            f"{IND}    bins NX   = {{5'b00001}};\n"
+            f"{IND}    bins UF   = {{5'b00010}};\n"
+            f"{IND}    bins OF   = {{5'b00100}};\n"
+            f"{IND}    bins DZ   = {{5'b01000}};\n"
+            f"{IND}    bins NV   = {{5'b10000}};\n"
+            f"{IND}    bins multi = default;\n"
+            f'{IND}}}\n')
+
 TEMPLATES = {
+    "REG_FPVALUE":      t_reg_fpvalue,
+    "FP_RM":            t_fp_rm,
+    "FP_FFLAG":         t_fp_fflag,
     "ASM_COUNT":        t_asm_count,
     "REG_ASSIGN":       t_reg_assign,
     "REG_COMPARE":      t_reg_compare,
@@ -180,9 +257,19 @@ TEMPLATES = {
 
 # ---------------------------------------------------------------------------
 
+# Covergroup-header row kinds. "instruction" is the one we generate; the others
+# are whole covergroups of a DIFFERENT SHAPE (a csr_<name>_cg is sampled from
+# sample_csrs(), not from the instruction dispatch) and are skipped as a unit.
+#
+# This mattered: the first parser only looked for "instruction" headers, so the
+# coverpoints of RV32F's csr_fcsr_cg / csr_fflags_cg / csr_frm_cg were silently
+# appended to whichever instruction covergroup happened to come last (fsw_cg).
+# It produced a plausible file with 17 CSR coverpoints grafted onto a store.
+NON_INSTR_HEADERS = {"csr", "scenario", "metric"}
+
 def parse_dvplan(path):
-    """CSV -> [(cg_name, mnemonic, [(cp_name, type, operand, desc), ...])]"""
-    out, cur = [], None
+    """CSV -> ([(cg_name, mnemonic, [(cp_name, type, operand, desc), ...])], skipped)"""
+    out, cur, skipped = [], None, []
     with open(path, newline="") as f:
         for row in csv.reader(f):
             row = (row + [""] * 6)[:6]
@@ -190,9 +277,12 @@ def parse_dvplan(path):
             if ext and cg and typ == "instruction":
                 cur = (cg, operand, [])          # operand column holds the mnemonic
                 out.append(cur)
+            elif ext and cg and typ in NON_INSTR_HEADERS:
+                cur = None                       # swallow this covergroup entirely
+                skipped.append((cg, typ))
             elif cur is not None and cp and typ:
                 cur[2].append((cp, typ, operand, desc))
-    return out
+    return out, skipped
 
 def emit_covergroup(ext, cg, mn, cps):
     # ext/cg are needed for CP_OVERRIDES lookup
@@ -212,6 +302,8 @@ def emit_covergroup(ext, cg, mn, cps):
     blocks, order = {}, []
     for cp, typ, op, desc in cps:
         if typ == "INST_ILLEGAL":
+            continue
+        if cp in SKIP_CPS:
             continue
         if typ not in TEMPLATES:
             sys.exit(f"no template for coverage type '{typ}' (coverpoint {cp})")
@@ -297,6 +389,11 @@ def main():
     ap.add_argument("--ext", required=True)
     ap.add_argument("--out")
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--skip-cps", default="",
+                    help="comma-separated coverpoint names to OMIT. Use for coverpoints "
+                         "whose input this testbench cannot drive: emitting one against an "
+                         "undriven signal is worse than omitting it, because it reliably "
+                         "hits its zero bin and reads as COVERED.")
     ap.add_argument("--names", default=os.path.join(HERE, "inst_names.txt"))
     ap.add_argument("--formats", default=os.path.join(HERE, "inst_formats.txt"))
     a = ap.parse_args()
@@ -305,11 +402,15 @@ def main():
         load_names(a.names)
     if os.path.exists(a.formats):
         load_formats(a.formats)
+    if a.skip_cps:
+        SKIP_CPS.update(x.strip() for x in a.skip_cps.split(',') if x.strip())
 
     csv_path = os.path.join(REPO, "dvplans", f"{a.ext}_coverage_dvplan.csv")
     if not os.path.exists(csv_path):
         sys.exit(f"no dvplan for {a.ext}: {csv_path}")
-    plan = parse_dvplan(csv_path)
+    plan, skipped_cgs = parse_dvplan(csv_path)
+    for cg, typ in skipped_cgs:
+        print(f"  SKIPPED covergroup {cg} (kind '{typ}': not an instruction covergroup)")
     body = emit_file(a.ext, plan)
 
     if a.verify:

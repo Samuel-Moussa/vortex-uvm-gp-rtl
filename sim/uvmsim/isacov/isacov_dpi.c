@@ -29,65 +29,64 @@
 // hex literal ("0xfc1"). Both are handled; anything unrecognised returns -1
 // rather than a plausible-looking wrong number.
 //=============================================================================
-#include <cstdlib>
-#include <cstring>
-#include <cstdio>
-#include <string>
-#include <unordered_map>
+// Deliberately PLAIN C, with no libstdc++ use at all. QuestaSim 2021.2 ships its
+// own gcc-7.4 libstdc++, so a std::string / std::unordered_map build fails to
+// load with `GLIBCXX_3.4.29 not found` -- measured, not hypothetical. A linear
+// scan over ~50 entries, a handful of times per program, is not worth a
+// dependency that breaks the simulator.
+#include <stdlib.h>
+#include <string.h>
 
-extern "C" {
+typedef struct { const char* name; int addr; } csr_ent_t;
 
-static const std::unordered_map<std::string, int>& csr_table() {
-    static const std::unordered_map<std::string, int> t = {
-        // User floating-point (the only writable ones this project touches)
-        {"fflags", 0x001}, {"frm", 0x002}, {"fcsr", 0x003},
-        // User counters
-        {"cycle", 0xC00}, {"time", 0xC01}, {"instret", 0xC02},
-        {"cycleh", 0xC80}, {"timeh", 0xC81}, {"instreth", 0xC82},
-        // Machine information
-        {"mvendorid", 0xF11}, {"marchid", 0xF12}, {"mimpid", 0xF13},
-        {"mhartid", 0xF14},
-        // Machine trap setup / handling
-        {"mstatus", 0x300}, {"misa", 0x301}, {"medeleg", 0x302},
-        {"mideleg", 0x303}, {"mie", 0x304}, {"mtvec", 0x305},
-        {"mcounteren", 0x306}, {"mscratch", 0x340}, {"mepc", 0x341},
-        {"mcause", 0x342}, {"mtval", 0x343}, {"mip", 0x344},
-        // Machine counters
-        {"mcycle", 0xB00}, {"minstret", 0xB02},
-        {"mcycleh", 0xB80}, {"minstreth", 0xB82},
-        // Physical memory protection
-        {"pmpcfg0", 0x3A0}, {"pmpaddr0", 0x3B0},
-        // Supervisor (decoded by objdump even though Vortex is M-mode only)
-        {"satp", 0x180},
-    };
-    return t;
-}
+static const csr_ent_t CSR_TABLE[] = {
+    // User floating-point (the only writable ones this project touches)
+    {"fflags", 0x001}, {"frm", 0x002}, {"fcsr", 0x003},
+    // User counters
+    {"cycle", 0xC00}, {"time", 0xC01}, {"instret", 0xC02},
+    {"cycleh", 0xC80}, {"timeh", 0xC81}, {"instreth", 0xC82},
+    // Machine information
+    {"mvendorid", 0xF11}, {"marchid", 0xF12}, {"mimpid", 0xF13},
+    {"mhartid", 0xF14},
+    // Machine trap setup / handling
+    {"mstatus", 0x300}, {"misa", 0x301}, {"medeleg", 0x302},
+    {"mideleg", 0x303}, {"mie", 0x304}, {"mtvec", 0x305},
+    {"mcounteren", 0x306}, {"mscratch", 0x340}, {"mepc", 0x341},
+    {"mcause", 0x342}, {"mtval", 0x343}, {"mip", 0x344},
+    // Machine counters
+    {"mcycle", 0xB00}, {"minstret", 0xB02},
+    {"mcycleh", 0xB80}, {"minstreth", 0xB82},
+    // Physical memory protection
+    {"pmpcfg0", 0x3A0}, {"pmpaddr0", 0x3B0},
+    // Supervisor (decoded by objdump even though Vortex is M-mode only)
+    {"satp", 0x180},
+    {NULL, -1}
+};
 
 // Returns the CSR address, or -1 if the spelling is not recognised.
 int rvviRefCsrIndex(int hartId, const char* csrName) {
     (void)hartId;                       // Vortex CSR numbering is not per-hart
-    if (csrName == nullptr) return -1;
+    if (csrName == NULL) return -1;
 
     // Hex literal form, e.g. "0xfc1" -- every Vortex GPU CSR arrives this way.
     if (csrName[0] == '0' && (csrName[1] == 'x' || csrName[1] == 'X')) {
-        char* end = nullptr;
-        long v = std::strtol(csrName + 2, &end, 16);
+        char* end = NULL;
+        long v = strtol(csrName + 2, &end, 16);
         if (end && *end == '\0' && v >= 0 && v < 4096) return (int)v;
         return -1;
     }
     // mhpmcounter3..31 and their high halves, which objdump spells out.
-    if (std::strncmp(csrName, "mhpmcounter", 11) == 0) {
+    if (strncmp(csrName, "mhpmcounter", 11) == 0) {
         const char* p = csrName + 11;
-        char* end = nullptr;
-        long n = std::strtol(p, &end, 10);
+        char* end = NULL;
+        long n = strtol(p, &end, 10);
         if (n >= 3 && n <= 31) {
             if (end && *end == '\0')                 return (int)(0xB00 + n);
             if (end && end[0] == 'h' && end[1] == 0) return (int)(0xB80 + n);
         }
         return -1;
     }
-    auto it = csr_table().find(csrName);
-    return (it == csr_table().end()) ? -1 : it->second;
+    for (int i = 0; CSR_TABLE[i].name != NULL; i++)
+        if (strcmp(CSR_TABLE[i].name, csrName) == 0) return CSR_TABLE[i].addr;
+    return -1;
 }
-
-} // extern "C"
