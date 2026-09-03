@@ -15,7 +15,7 @@
 #                    the text; ABI names score nothing.
 #   * no-aliases  -> "csrrs x5,0xfc1,x0" not "csrr t0,nw".  Pseudo-instructions
 #                    are not RV32I mnemonics and match no covergroup.
-# Vortex custom ops render as ".insn 4, 0x..." and correctly match nothing.
+# Vortex custom ops render as ".4byte 0x..." and correctly match nothing.
 set -euo pipefail
 
 ELF=${1:?usage: gen_disass_map.sh <kernel.elf> [out.txt]}

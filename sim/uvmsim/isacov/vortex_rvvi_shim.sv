@@ -46,7 +46,7 @@
 //   (RISCV_coverage_base.svh:1381).  The text comes from isacov_pkg's static
 //   PC->text map built by gen_disass_map.sh from the kernel's own objdump.
 //   A PC with no map entry yields "" which matches no covergroup -- the
-//   correct behaviour for Vortex custom ops, which objdump renders as `.insn`
+//   correct behaviour for Vortex custom ops, which objdump renders as `.4byte`
 //   and which are covered by OUR collector instead (vx_instr_probe).
 //
 // rvviTrace fields are all `wire` (rvviTrace.sv:67-104), so they must be
@@ -75,6 +75,8 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
     logic [ILEN-1:0]       r_insn    [NHART];
     logic [XLEN-1:0]       r_pc      [NHART];
     logic [31:0]           r_x_wb    [NHART];
+    logic [31:0]           r_f_wb    [NHART];
+    logic [31:0][FLEN-1:0] r_f_wdata [NHART];
 
     // x_wdata is a FULL 32-REGISTER SNAPSHOT, not "the value written this
     // cycle". RVVI defines x_wdata[r] as register r's current value and x_wb[r]
@@ -101,6 +103,7 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
         initial begin
             r_valid[h] = 1'b0; r_order[h] = '0; r_insn[h] = '0;
             r_pc[h] = '0; r_x_wb[h] = '0; r_x_wdata[h] = '0;
+            r_f_wb[h] = '0; r_f_wdata[h] = '0;
         end
         assign rvvi.valid[h][0]       = r_valid[h];
         assign rvvi.order[h][0]       = r_order[h];
@@ -114,8 +117,8 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
         assign rvvi.mode[h][0]        = 2'b11;  // M-mode only
         assign rvvi.ixl[h][0]         = 2'b01;  // XLEN=32
         assign rvvi.pc_wdata[h][0]    = '0;
-        assign rvvi.f_wb[h][0]        = '0;
-        assign rvvi.f_wdata[h][0]     = '0;
+        assign rvvi.f_wb[h][0]        = r_f_wb[h];
+        assign rvvi.f_wdata[h][0]     = r_f_wdata[h];
         assign rvvi.v_wb[h][0]        = '0;
         assign rvvi.v_wdata[h][0]     = '0;
         assign rvvi.csr_wb[h][0]      = '0;
@@ -143,6 +146,13 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
     wire retire_fire = commit_arb_if[0].valid && commit_arb_if[0].ready;
 
     longint unsigned n_shim_sampled = 0;   // liveness
+    // Split writeback counters. These exist to make the FP routing OBSERVABLE:
+    // the bug they were added to catch (rd is a unified register number) was
+    // silent -- FP writebacks simply vanished and would have looked like a
+    // stimulus gap in any future RV32F bank. A non-zero n_fp_wb on an FP kernel
+    // is the direct evidence that f_wb/f_wdata are really being driven.
+    longint unsigned n_int_wb = 0;
+    longint unsigned n_fp_wb  = 0;
 
     always @(posedge clk) begin
         if (isacov_pkg::isacov_en && !reset && retire_fire) begin
@@ -163,10 +173,33 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
                     // Update the snapshot IN PLACE -- it must persist across
                     // retirements, so it is never cleared. x0 is hardwired zero
                     // and is excluded from the writeback flag.
+                    //
+                    // `rd` is a UNIFIED register number, not an architectural
+                    // index: make_reg_num() packs it as (reg_type << RV_REGS_BITS)
+                    // | idx (VX_gpu_pkg.sv:910), and REG_TYPES == 2 whenever the
+                    // FPU is built (:41-45). Treating it as a plain index is
+                    // wrong twice over -- `32'b1 << rd` sets NO bit once rd >= 32,
+                    // and `x_wdata[rd]` is an out-of-range write that SystemVerilog
+                    // discards in silence. The effect was not corruption but
+                    // INVISIBILITY: every floating-point writeback was dropped, so
+                    // an RV32F model would have scored zero and looked like a
+                    // stimulus gap. Split the number properly and route F results
+                    // to f_wb/f_wdata, which is what RVVI defines them for.
                     r_x_wb[h] = '0;
-                    if (commit_arb_if[0].data.wb && commit_arb_if[0].data.rd != 0) begin
-                        r_x_wb[h] = (32'b1 << commit_arb_if[0].data.rd);
-                        r_x_wdata[h][commit_arb_if[0].data.rd] = commit_arb_if[0].data.data[l];
+                    r_f_wb[h] = '0;
+                    if (commit_arb_if[0].data.wb) begin
+                        logic [RV_REGS_BITS-1:0] ridx;
+                        ridx = commit_arb_if[0].data.rd[RV_REGS_BITS-1:0];
+                        if (get_reg_type(commit_arb_if[0].data.rd) == REG_TYPE_F) begin
+                            // f0 is a real register: no x0-style exclusion here.
+                            r_f_wb[h] = (32'b1 << ridx);
+                            r_f_wdata[h][ridx] = commit_arb_if[0].data.data[l][FLEN-1:0];
+                            n_fp_wb++;
+                        end else if (ridx != 0) begin
+                            r_x_wb[h] = (32'b1 << ridx);
+                            r_x_wdata[h][ridx] = commit_arb_if[0].data.data[l][XLEN-1:0];
+                            n_int_wb++;
+                        end
                     end
                     r_valid[h] = 1'b1;
                     r_order[h] = r_order[h] + 1;
@@ -180,7 +213,7 @@ module vortex_rvvi_shim import VX_gpu_pkg::*; (
     end
 
     final if (isacov_pkg::isacov_en)
-        $display("[ISACOV] %m mode=%s NHART=%0d LANES=%0d sampled=%0d",
-                 isacov_mode, NHART, LANES, n_shim_sampled);
+        $display("[ISACOV] %m mode=%s NHART=%0d LANES=%0d sampled=%0d int_wb=%0d fp_wb=%0d",
+                 isacov_mode, NHART, LANES, n_shim_sampled, n_int_wb, n_fp_wb);
 
 endmodule : vortex_rvvi_shim

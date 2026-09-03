@@ -127,6 +127,16 @@ fi
 # terminal without editing this script, e.g.
 #   EXTRA_PLUSARGS="+L2CACHE" make sim ...
 # Empty by default => byte-identical. Appended last so it can override.
+# riscvISACOV bank: link our own implementation of the ONE RVVI DPI function
+# riscvISACOV calls (rvviRefCsrIndex -- a CSR name-to-number decoder). RVVI
+# declares 66 DPI imports that ImperasDV would supply; without them QuestaSim
+# aborts with a null-function-pointer fatal on the FIRST csr instruction, which
+# crt0 issues before main(). Empty unless ISACOV=1.
+ISACOV_DPI=""
+if [[ "${ISACOV:-0}" == "1" && -f "$VORTEX_UVM_HOME/isacov/isacov_dpi.so" ]]; then
+    ISACOV_DPI="-sv_lib $VORTEX_UVM_HOME/isacov/isacov_dpi"
+fi
+
 if [[ -n "${EXTRA_PLUSARGS:-}" ]]; then
     SIM_OPTS="$SIM_OPTS $EXTRA_PLUSARGS"
     print_info "Extra plusargs: $EXTRA_PLUSARGS"
@@ -157,10 +167,10 @@ if [[ "$SIMULATOR" == "questa" ]]; then
     export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
 
     if [[ $GUI_MODE -eq 1 ]]; then
-        vsim -coverage vortex_tb_top $SIM_OPTS $DPI_FLAG \
+        vsim -coverage vortex_tb_top $SIM_OPTS $DPI_FLAG $ISACOV_DPI \
             -do "add wave -r /*; run -all"
     else
-        vsim -coverage -c vortex_tb_top $SIM_OPTS $DPI_FLAG \
+        vsim -coverage -c vortex_tb_top $SIM_OPTS $DPI_FLAG $ISACOV_DPI \
             -onfinish stop \
             -do "run -all; coverage save -testname ${TEST_NAME}_${PROG_SHORT} $RESULTS_RUN_DIR/reports/coverage.ucdb; quit -f" \
             2>&1 | tee "$LOG_FILE"

@@ -182,7 +182,16 @@ if [[ $NO_COMPILE -eq 0 ]]; then
         # lives under isacov/ext, which precedes third_party on +incdir+.
         ISACOV_EXTS="${ISACOV_EXTS:-RV32I RV32M}"
         ISACOV_EXT_DEFS=""
-        for e in $ISACOV_EXTS; do ISACOV_EXT_DEFS="$ISACOV_EXT_DEFS +define+COVER_$e"; done
+        # The gating macros in RISCV_coverage_base.svh are ALL-CAPS
+        # (`COVER_RV32ZICSR`, not `COVER_RV32Zicsr`) while the include FILENAMES
+        # keep the mixed-case extension name. Getting this wrong does not fail
+        # the compile -- the define is simply never tested, the extension is
+        # silently absent, and the run still passes with no covergroups. Measured
+        # exactly that once; hence the uppercase conversion and the liveness
+        # check below.
+        for e in $ISACOV_EXTS; do
+            ISACOV_EXT_DEFS="$ISACOV_EXT_DEFS +define+COVER_$(echo "$e" | tr '[:lower:]' '[:upper:]')"
+        done
         print_info "riscvISACOV extensions: $ISACOV_EXTS"
         export VORTEX_ISACOV_RVVI="$ISACOV_ROOT/RVVI/source/host/rvvi"
         vlog -sv $COMPILE_OPTS \
