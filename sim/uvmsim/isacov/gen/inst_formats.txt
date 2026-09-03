@@ -117,3 +117,42 @@ fmv.w.x   = fd,rs1
 fmv.x.w   = rd,fs1
 flw       = fd,imm,rs1 | load
 fsw       = fs2,imm,rs1 | store
+
+# --- RV32D: same structure as RV32F, doubles. Operand order from the RISC-V
+# spec (objdump -M numeric,no-aliases renders D exactly like F).
+# NOTE: fcvt.d.l/.lu, fcvt.l/.lu.d, fmv.d.x, fmv.x.d are RV64-ONLY -- they
+# cannot be encoded or executed at XLEN=32. They are in Imperas' RV32D dvplan
+# regardless; their covergroups are generated but are structurally unreachable
+# here (waiver W-14).
+fadd.d    = fd,fs1,fs2,fp_rm
+fsub.d    = fd,fs1,fs2,fp_rm
+fmul.d    = fd,fs1,fs2,fp_rm
+fdiv.d    = fd,fs1,fs2,fp_rm
+fsqrt.d   = fd,fs1,fp_rm
+fmadd.d   = fd,fs1,fs2,fs3,fp_rm
+fmsub.d   = fd,fs1,fs2,fs3,fp_rm
+fnmadd.d  = fd,fs1,fs2,fs3,fp_rm
+fnmsub.d  = fd,fs1,fs2,fs3,fp_rm
+fmin.d    = fd,fs1,fs2
+fmax.d    = fd,fs1,fs2
+fsgnj.d   = fd,fs1,fs2
+fsgnjn.d  = fd,fs1,fs2
+fsgnjx.d  = fd,fs1,fs2
+feq.d     = rd,fs1,fs2
+flt.d     = rd,fs1,fs2
+fle.d     = rd,fs1,fs2
+fclass.d  = rd,fs1
+fcvt.w.d  = rd,fs1,fp_rm
+fcvt.wu.d = rd,fs1,fp_rm
+fcvt.d.w  = fd,rs1,fp_rm
+fcvt.d.wu = fd,rs1,fp_rm
+fcvt.s.d  = fd,fs1,fp_rm
+fcvt.d.s  = fd,fs1,fp_rm
+fcvt.l.d  = rd,fs1,fp_rm
+fcvt.lu.d = rd,fs1,fp_rm
+fcvt.d.l  = fd,rs1,fp_rm
+fcvt.d.lu = fd,rs1,fp_rm
+fmv.d.x   = fd,rs1
+fmv.x.d   = rd,fs1
+fld       = fd,imm,rs1 | load
+fsd       = fs2,imm,rs1 | store

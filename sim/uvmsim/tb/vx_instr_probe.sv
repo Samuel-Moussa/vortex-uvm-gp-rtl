@@ -99,13 +99,27 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
     // ---- ALU ----------------------------------------------------------------
     covergroup alu_class_cg with function sample(
         logic [INST_ALU_BITS-1:0] op_type,
+        logic [ALU_TYPE_BITS-1:0] xtype,
         int                       active_thr,
         logic [ISSUE_WIS_W-1:0]   wis
     );
         option.per_instance = 1;
         option.name         = "instr_class_cg_alu";
 
-        cp_alu_op : coverpoint op_type {
+        // EX_ALU multiplexes FOUR disjoint op encodings onto the same op_type
+        // field, discriminated ONLY by op_args.alu.xtype (VX_decode.sv:509 for
+        // VOTE/SHFL). The numeric spaces collide exactly:
+        //   INST_ALU_ADD == INST_BR_BEQ == INST_M_MUL == VOTE_ALL == 4'b0000
+        // so an unqualified coverpoint counts beq/mul/vote.all as `add`.
+        // Every ALU op coverpoint below is therefore gated on xtype. (OBS-049)
+        cp_xtype : coverpoint xtype {
+            bins arith  = { ALU_TYPE_ARITH };
+            bins branch = { ALU_TYPE_BRANCH };
+            bins muldiv = { ALU_TYPE_MULDIV };
+            bins other  = { ALU_TYPE_OTHER };
+        }
+
+        cp_alu_op : coverpoint op_type iff (xtype == ALU_TYPE_ARITH) {
             bins add   = { INST_ALU_ADD };
             bins sub   = { INST_ALU_SUB };
             bins and_  = { INST_ALU_AND };
@@ -120,6 +134,59 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
             bins auipc = { INST_ALU_AUIPC };
             bins czeq  = { INST_ALU_CZEQ };   // Zicond — ZERO until a Zicond build runs
             bins czne  = { INST_ALU_CZNE };   // Zicond — ZERO until a Zicond build runs
+        }
+
+        // ---- BRANCH class (xtype == ALU_TYPE_BRANCH) -------------------------
+        // Vortex folds branches, jumps and the system-return ops into EX_ALU.
+        // Before OBS-049 these had NO bins at all -- branch direction and jump
+        // form were entirely uncovered.
+        cp_branch_op : coverpoint op_type iff (xtype == ALU_TYPE_BRANCH) {
+            bins beq    = { INST_BR_BEQ };
+            bins bne    = { INST_BR_BNE };
+            bins blt    = { INST_BR_BLT };
+            bins bge    = { INST_BR_BGE };
+            bins bltu   = { INST_BR_BLTU };
+            bins bgeu   = { INST_BR_BGEU };
+            bins jal    = { INST_BR_JAL };
+            bins jalr   = { INST_BR_JALR };
+            bins ebreak = { INST_BR_EBREAK };
+            // ecall/uret/sret/mret: Vortex has no trap architecture (waiver
+            // W-11), and prepare.sh rewrites ecall->ebreak. Structurally
+            // unreachable from any program this bench can run.
+            ignore_bins no_trap_arch = { INST_BR_ECALL, INST_BR_URET,
+                                         INST_BR_SRET,  INST_BR_MRET };
+            bins other  = { INST_BR_OTHER };
+        }
+
+        // ---- MULDIV class (xtype == ALU_TYPE_MULDIV) -------------------------
+        // The RV32M surface, as the DUT actually dispatches it. This is our
+        // microarchitectural view; riscvISACOV's RV32M bank is the independent
+        // architectural view of the same instructions.
+        cp_muldiv_op : coverpoint op_type iff (xtype == ALU_TYPE_MULDIV) {
+            bins mul    = { INST_M_MUL };
+            bins mulh   = { INST_M_MULH };
+            bins mulhsu = { INST_M_MULHSU };
+            bins mulhu  = { INST_M_MULHU };
+            bins div    = { INST_M_DIV };
+            bins divu   = { INST_M_DIVU };
+            bins rem    = { INST_M_REM };
+            bins remu   = { INST_M_REMU };
+        }
+
+        // ---- OTHER class (xtype == ALU_TYPE_OTHER) = VOTE / SHFL -------------
+        // Vortex-CUSTOM warp-collective ops. riscvISACOV has NO dvplan for
+        // these (they are not RISC-V), so this coverpoint is the ONLY place
+        // they can ever be scored. VX_decode.sv:516 sets op_type = funct3;
+        // funct3[2] selects SHFL over VOTE, funct3[1:0] the sub-op.
+        cp_vote_shfl_op : coverpoint op_type iff (xtype == ALU_TYPE_OTHER) {
+            bins vote_all  = { {1'b0, INST_VOTE_ALL}  };
+            bins vote_any  = { {1'b0, INST_VOTE_ANY}  };
+            bins vote_uni  = { {1'b0, INST_VOTE_UNI}  };
+            bins vote_bal  = { {1'b0, INST_VOTE_BAL}  };
+            bins shfl_up   = { {1'b1, INST_SHFL_UP}   };
+            bins shfl_down = { {1'b1, INST_SHFL_DOWN} };
+            bins shfl_bfly = { {1'b1, INST_SHFL_BFLY} };
+            bins shfl_idx  = { {1'b1, INST_SHFL_IDX}  };
         }
 
         cp_active_threads : coverpoint active_thr {
@@ -299,6 +366,7 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
                     if (!reset && dispatch_if[gi].valid && dispatch_if[gi].ready) begin
                         cg.sample(
                             dispatch_if[gi].data.op_type,
+                            dispatch_if[gi].data.op_args.alu.xtype,
                             $countones(dispatch_if[gi].data.tmask),
                             dispatch_if[gi].data.wis
                         );
