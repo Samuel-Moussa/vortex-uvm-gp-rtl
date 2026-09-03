@@ -1,0 +1,60 @@
+# Instruction long names -> covergroup option.comment.
+# NOT present in the dvplan CSVs or the documentation: this string exists only
+# in Imperas' source, so it is supplied here as DATA. It is cosmetic -- it sets
+# no bin and changes no coverage number.
+#   RV32I entries: extracted from Imperas' RV32I_coverage.svh, so that the
+#     byte-exact verification run has the same data the original had. Every
+#     other aspect of that verification is generated from the CSV alone.
+#   RV32M entries: written here from the RISC-V spec (riscv-spec-20191213 ch.7),
+#     because no source exists to extract them from.
+
+# --- RV32I (extracted) ---
+add = Add
+addi = Add signed immediate
+and = AND
+andi = And signed immediate
+auipc = Add upper immediate to PC
+beq = Branch if Equal
+bge = Branch if Greater or Equal
+bgeu = Branch if Greater or Equal Unsigned
+blt = Branch if Less Than
+bltu = Branch if Less Than Unsigned
+bne = Branch if Not Equal
+fence = Fence
+jal = Jump and Link
+jalr = Jump and Link, register
+lb = Load Byte (8-bit)
+lbu = Load Unsigned Byte (8-bit)
+lh = Load Half word (16-bit)
+lhu = Load Unsigned Half word (16-bit)
+lui = Load Upper Immediate
+lw = Load Word (32-bit)
+nop = NOP
+or = OR
+ori = Or signed immediate
+sb = Store Byte (8-bit)
+sh = Store Half-word (16-bit)
+sll = Shift Left Logical
+slli = Shift Left Logical Immediate
+slt = Set if Less Than
+slti = Set if Less than Immediate
+sltiu = Set if Less than Immediate Unsigned
+sltu = Set if Less Than Unsigned
+sra = Shift Right Arithmetic
+srai = Shift Right Arithmetic Immediate
+srl = Shift Right Logical
+srli = Shift Right Logical Immediate
+sub = Subtract
+sw = Store Word (32-bit)
+xor = Exlusive OR
+xori = Exlusive-OR Immediate
+
+# --- RV32M (written from the specification) ---
+mul = Multiply
+mulh = Multiply High Signed Signed
+mulhsu = Multiply High Signed Unsigned
+mulhu = Multiply High Unsigned Unsigned
+div = Divide Signed
+divu = Divide Unsigned
+rem = Remainder Signed
+remu = Remainder Unsigned

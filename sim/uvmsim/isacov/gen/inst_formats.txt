@@ -1,0 +1,74 @@
+# Instruction OPERAND FORMAT -> the <ext>_sample() dispatch body.
+#
+# The dvplan CSV says WHICH coverpoints an instruction has, but not the ORDER
+# its operands appear in the disassembly, nor whether an immediate is an address
+# (add_imm_addr), a register offset (add_reg_offset), or a plain immediate; nor
+# whether the instruction is a load/store that needs add_mem_address().  That is
+# instruction-FORMAT knowledge from the ISA specification, supplied here as DATA.
+#
+# Syntax:  <mnemonic> = <op>[,<op>...] [| load|store]
+#   ops: rd rs1 rs2 imm imm_addr reg_offset none
+# Position in the list is the operand index passed to add_*().
+
+# --- RV32I: R-type (rd, rs1, rs2) ---
+add    = rd,rs1,rs2
+sub    = rd,rs1,rs2
+sll    = rd,rs1,rs2
+slt    = rd,rs1,rs2
+sltu   = rd,rs1,rs2
+xor    = rd,rs1,rs2
+srl    = rd,rs1,rs2
+sra    = rd,rs1,rs2
+or     = rd,rs1,rs2
+and    = rd,rs1,rs2
+
+# --- RV32I: I-type arithmetic (rd, rs1, imm) ---
+addi   = rd,rs1,imm
+slti   = rd,rs1,imm
+sltiu  = rd,rs1,imm
+xori   = rd,rs1,imm
+ori    = rd,rs1,imm
+andi   = rd,rs1,imm
+slli   = rd,rs1,imm
+srli   = rd,rs1,imm
+srai   = rd,rs1,imm
+
+# --- RV32I: loads  rd, imm(rs1) ---
+lb     = rd,imm,rs1 | load
+lh     = rd,imm,rs1 | load
+lw     = rd,imm,rs1 | load
+lbu    = rd,imm,rs1 | load
+lhu    = rd,imm,rs1 | load
+
+# --- RV32I: stores  rs2, imm(rs1) ---
+sb     = rs2,imm,rs1 | store
+sh     = rs2,imm,rs1 | store
+sw     = rs2,imm,rs1 | store
+
+# --- RV32I: branches (rs1, rs2, target) ---
+beq    = rs1,rs2,imm_addr
+bne    = rs1,rs2,imm_addr
+blt    = rs1,rs2,imm_addr
+bge    = rs1,rs2,imm_addr
+bltu   = rs1,rs2,imm_addr
+bgeu   = rs1,rs2,imm_addr
+
+# --- RV32I: upper-immediate and jumps ---
+lui    = rd,imm
+auipc  = rd,imm
+jal    = rd,imm_addr
+jalr   = rd,reg_offset
+
+# --- RV32I: no operands ---
+fence  = none
+nop    = none
+
+# --- RV32M: all eight are R-type ---
+mul    = rd,rs1,rs2
+mulh   = rd,rs1,rs2
+mulhsu = rd,rs1,rs2
+mulhu  = rd,rs1,rs2
+div    = rd,rs1,rs2
+divu   = rd,rs1,rs2
+rem    = rd,rs1,rs2
+remu   = rd,rs1,rs2
