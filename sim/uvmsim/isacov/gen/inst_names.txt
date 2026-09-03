@@ -58,3 +58,12 @@ div = Divide Signed
 divu = Divide Unsigned
 rem = Remainder Signed
 remu = Remainder Unsigned
+
+# --- RV32Zicsr / RV32Zifencei (written from the specification) ---
+csrrw = CSR Read Write
+csrrs = CSR Read Set
+csrrc = CSR Read Clear
+csrrwi = CSR Read Write Immediate
+csrrsi = CSR Read Set Immediate
+csrrci = CSR Read Clear Immediate
+fence.i = Fence Instruction Stream

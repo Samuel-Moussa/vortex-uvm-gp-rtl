@@ -72,3 +72,14 @@ div    = rd,rs1,rs2
 divu   = rd,rs1,rs2
 rem    = rd,rs1,rs2
 remu   = rd,rs1,rs2
+
+# --- RV32Zicsr: rd, csr, rs1|imm ---
+csrrw   = rd,csr,rs1
+csrrs   = rd,csr,rs1
+csrrc   = rd,csr,rs1
+csrrwi  = rd,csr,imm
+csrrsi  = rd,csr,imm
+csrrci  = rd,csr,imm
+
+# --- RV32Zifencei ---
+fence.i = none
