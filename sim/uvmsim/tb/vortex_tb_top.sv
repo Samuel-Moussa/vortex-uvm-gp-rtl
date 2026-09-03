@@ -1088,6 +1088,33 @@ module vortex_tb_top;
         .perf_mshr_stall(perf_mshr_stall)
     );
 
+    // Gap G-0: passive MEMORY-COALESCING coverage probe, bound directly into
+    // VX_mem_coalescer. VX_mem_unit.sv:160 instantiates the coalescer only
+    // when `` (`NUM_LSU_LANES > 1) && (LSU_WORD_SIZE != DCACHE_WORD_SIZE) `` --
+    // config-aware BY CONSTRUCTION, same principle as the cache probe above:
+    // a config where lanes map 1:1 onto the dcache word elaborates no
+    // instance and adds no bins, rather than leaving an unreachable block to
+    // waive. NUM_REQS/DATA_RATIO/OUT_REQS are the bound instance's OWN
+    // elaborated parameters (bind inherits them), never restated here. See
+    // vx_coalescer_probe.sv header for the full `misses` semantics derivation.
+    bind VX_mem_coalescer vx_coalescer_probe #(
+        .INSTANCE_ID   (INSTANCE_ID),
+        .NUM_REQS      (NUM_REQS),
+        .DATA_RATIO    (DATA_RATIO),
+        .OUT_REQS      (OUT_REQS),
+        .PERF_CTR_BITS (PERF_CTR_BITS)
+    ) u_coalescer_probe (
+        .clk           (clk),
+        .reset         (reset),
+        .misses        (misses),
+        .in_req_valid  (in_req_valid),
+        .in_req_rw     (in_req_rw),
+        .in_req_mask   (in_req_mask),
+        .in_req_ready  (in_req_ready),
+        .req_sent      (req_sent),
+        .is_last_batch (is_last_batch)
+    );
+
 `ifdef ISACOV
     // ---- riscvISACOV bank (opt-in: compiled only when ISACOV=1) ------------
     // Independent third-party RV32I ISA functional-coverage model (Imperas,
