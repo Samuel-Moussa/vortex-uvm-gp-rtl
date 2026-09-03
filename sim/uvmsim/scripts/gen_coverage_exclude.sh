@@ -14,6 +14,20 @@
 #   untested (that would inflate the number dishonestly). Reachable gaps are closed
 #   with directed tests instead (e.g. vote_shfl for ALU_TYPE_OTHER), not waived.
 #
+# Targeting mechanism: DUT RTL waivers use -srcfile/-linerange (config-generic --
+# works for any instance count without knowing hierarchy in advance). The
+# vortex_axi_if.sv / vortex_mem_if.sv (both `interface`, not `module`) EUR waivers
+# use -dirpath (cover directives) / -assertpath (assertions) instead, addressing
+# the object by its exact hierarchical name -- srcfile/linerange was found
+# (2026-09-03, OBS-053) to silently fail ("had no effect", 0 objects matched) for
+# EVERY interface-scoped SVA object in this build, both inside and outside a
+# generate block, while it works reliably for module-scoped (DUT RTL) objects.
+# Both axi_if and mem_if are instantiated exactly ONCE at a fixed path
+# (tb/vortex_if.sv:53,60), independent of NCL/NC, so a fixed dirpath/assertpath
+# is config-invariant here -- do NOT do this for anything replicated per-core/
+# per-cluster (the cache probes etc.), where srcfile/linerange's config-generic
+# behaviour is load-bearing.
+#
 # Waiver classes (the '# --- Xxx:' comments are the audit label; Questa's built-in
 # -reason code is in parentheses — Questa rejects custom reason strings):
 #   EOTH  third-party IP, not the Vortex DUT     (cvfpu, Berkeley HardFloat in TCU)   -> EOTH
@@ -302,7 +316,7 @@ echo
 #     below; a vacuous assertion is not a coverage hole.
 # -----------------------------------------------------------------------------
 echo "# --- EUR: rlast assertion is vacuous under a single-beat master ---"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 507 -reason EUR ;# assert_rlast_on_last_beat"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/assert_rlast_on_last_beat} -reason EUR ;# assert_rlast_on_last_beat"
 echo
 
 # -----------------------------------------------------------------------------
@@ -323,18 +337,18 @@ echo
 # -----------------------------------------------------------------------------
 echo "# --- EUR: structural AXI cover-directives (restricted master; mirror of 148ff78) ---"
 # (a) structurally impossible
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 755 -reason EUR ;# aw_burst_incr  (awburst hardwired FIXED)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 757 -reason EUR ;# aw_burst_wrap  (awburst hardwired FIXED)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 779 -reason EUR ;# awlen_2to4     (awlen hardwired 0)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 781 -reason EUR ;# awlen_5to16    (awlen hardwired 0)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 783 -reason EUR ;# awlen_17to64   (awlen hardwired 0)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 785 -reason EUR ;# awlen_65to255  (awlen hardwired 0)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 789 -reason EUR ;# concurrent_aw_ar (read XOR write per port)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_aw_burst_incr} -reason EUR ;# aw_burst_incr  (awburst hardwired FIXED)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_aw_burst_wrap} -reason EUR ;# aw_burst_wrap  (awburst hardwired FIXED)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_awlen_2to4} -reason EUR ;# awlen_2to4     (awlen hardwired 0)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_awlen_5to16} -reason EUR ;# awlen_5to16    (awlen hardwired 0)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_awlen_17to64} -reason EUR ;# awlen_17to64   (awlen hardwired 0)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_awlen_65to255} -reason EUR ;# awlen_65to255  (awlen hardwired 0)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_concurrent_aw_ar} -reason EUR ;# concurrent_aw_ar (read XOR write per port)"
 # (b) unverifiable-class (TB slave OKAY-only; AXI errors not SimX-checkable)
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 763 -reason EUR ;# bresp_slverr   (slave OKAY-only)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 765 -reason EUR ;# bresp_decerr   (slave OKAY-only)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 771 -reason EUR ;# rresp_slverr   (slave OKAY-only)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 773 -reason EUR ;# rresp_decerr   (slave OKAY-only)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_bresp_slverr} -reason EUR ;# bresp_slverr   (slave OKAY-only)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_bresp_decerr} -reason EUR ;# bresp_decerr   (slave OKAY-only)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_rresp_slverr} -reason EUR ;# rresp_slverr   (slave OKAY-only)"
+echo "coverage exclude -dirpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/cover_rresp_decerr} -reason EUR ;# rresp_decerr   (slave OKAY-only)"
 echo
 
 # -----------------------------------------------------------------------------
@@ -352,17 +366,17 @@ echo
 #        mem-if build -> keyed to the AXI wrapper (harmless 'no effect' otherwise).
 # -----------------------------------------------------------------------------
 echo "# --- EUR: restricted-master AXI assertions (WRAP/INCR antecedent never holds) ---"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 586 -reason EUR ;# aw_wrap_len_legal"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 595 -reason EUR ;# ar_wrap_len_legal"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 605 -reason EUR ;# aw_4k_boundary (INCR)"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 615 -reason EUR ;# ar_4k_boundary (INCR)"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/assert_aw_wrap_len_legal} -reason EUR ;# aw_wrap_len_legal"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/assert_ar_wrap_len_legal} -reason EUR ;# ar_wrap_len_legal"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/assert_aw_4k_boundary} -reason EUR ;# aw_4k_boundary (INCR)"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/g_full_axi_checks/assert_ar_4k_boundary} -reason EUR ;# ar_4k_boundary (INCR)"
 echo "# --- EUR: idle MEM-interface assertions (unused on an AXI build) ---"
-echo "coverage exclude -srcfile ${TB}/vortex_mem_if.sv -linerange 135 -reason EUR ;# req_valid_stable"
-echo "coverage exclude -srcfile ${TB}/vortex_mem_if.sv -linerange 138 -reason EUR ;# req_addr_stable"
-echo "coverage exclude -srcfile ${TB}/vortex_mem_if.sv -linerange 152 -reason EUR ;# rsp_valid_stable"
-echo "coverage exclude -srcfile ${TB}/vortex_mem_if.sv -linerange 155 -reason EUR ;# rsp_data_stable"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/mem_if/assert_req_valid_stable} -reason EUR ;# req_valid_stable"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/mem_if/assert_req_addr_stable} -reason EUR ;# req_addr_stable"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/mem_if/assert_rsp_valid_stable} -reason EUR ;# rsp_valid_stable"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/mem_if/assert_rsp_data_stable} -reason EUR ;# rsp_data_stable"
 echo "# --- EUR: b_valid_stable unreachable — adapter hardwires m_axi_bready=1'b1 (VX_axi_adapter.sv:313) ---"
-echo "coverage exclude -srcfile ${TB}/vortex_axi_if.sv -linerange 374 -reason EUR ;# b_valid_stable (bready always 1)"
+echo "coverage exclude -assertpath {/vortex_tb_top/vif/axi_if/assert_b_valid_stable} -reason EUR ;# b_valid_stable (bready always 1)"
 echo
 
 echo "# --- end generated exclusions (config ${NCL}CL/${NC}C/${NW}W/${NT}T) ---"
