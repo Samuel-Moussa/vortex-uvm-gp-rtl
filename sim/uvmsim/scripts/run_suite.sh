@@ -212,6 +212,13 @@ runk sim-only lmem_stress 500000
 # because it is the evidence for that waiver.
 runk sim-only mshr_flood 4000000
 
+# coalesce_probe: G-0 gap-closure kernel (added 2026-09-04) -- fills cp_coalesce_kind
+# (full-coalesced/partial/full-scatter) on VX_mem_coalescer, previously zero coverage.
+runk sim-only coalesce_probe 500000
+# csr_probe: G-1 gap-closure kernel (added 2026-09-04) -- exercises all six Zicsr forms
+# (csrrw/csrrs/csrrc/csrrwi/csrrsi/csrrci) on FRM/FFLAGS, fills the RV32Zicsr L1 bank.
+runk sim-only csr_probe 500000
+
 # cache_tier: the ONLY kernel that targets the SHARED hierarchy (L2 per cluster, L3
 # per GPU) rather than L1. Every other kernel's working set stays inside the socket.
 # It works by REUSE -- touch a span sized to a level, then re-read it, which is what
