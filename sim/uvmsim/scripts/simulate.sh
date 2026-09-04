@@ -162,6 +162,15 @@ LOG_FILE="$RESULTS_RUN_DIR/logs/simulation.log"
 
 PROG_SHORT="$(basename "${PROGRAM%.*}")"   # strips path + .elf → "functional_mem"
 
+# OBS-054 fix: AXI_THROTTLE/AXI_FLOOD reuse the base PROGRAM_NAME, so without a
+# suffix their UCDB gets the SAME internal -testname as the plain run of the
+# same program. vcover-6854 then silently keeps one and drops the other on
+# merge. Suffix only when the mode is on => plain runs are byte-identical.
+COV_TESTNAME_SUFFIX=""
+[[ -n "${AXI_THROTTLE:-}" ]] && COV_TESTNAME_SUFFIX="_thr"
+[[ -n "${AXI_FLOOD:-}" ]] && COV_TESTNAME_SUFFIX="_flood"
+COV_TESTNAME="${TEST_NAME}_${PROG_SHORT}${COV_TESTNAME_SUFFIX}"
+
 if [[ "$SIMULATOR" == "questa" ]]; then
     # Preload correct libstdc++ to resolve GLIBCXX_3.4.29 from ramulator.so dependency
     export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
@@ -172,7 +181,7 @@ if [[ "$SIMULATOR" == "questa" ]]; then
     else
         vsim -coverage -c vortex_tb_top $SIM_OPTS $DPI_FLAG $ISACOV_DPI \
             -onfinish stop \
-            -do "run -all; coverage save -testname ${TEST_NAME}_${PROG_SHORT} $RESULTS_RUN_DIR/reports/coverage.ucdb; quit -f" \
+            -do "run -all; coverage save -testname ${COV_TESTNAME} $RESULTS_RUN_DIR/reports/coverage.ucdb; quit -f" \
             2>&1 | tee "$LOG_FILE"
     fi
 
@@ -286,7 +295,7 @@ fi
 if [[ -f "$COV_UCDB" ]]; then
     _COV_DIR="${VORTEX_UVM_COV_DIR:-$PROJECT_ROOT/cov}"
     mkdir -p "$_COV_DIR/staging"
-    stage_name="${TEST_NAME}_${PROG_SHORT}"
+    stage_name="${COV_TESTNAME}"
     stage_name="$(echo "$stage_name" | tr '/ ' '__')"   # sanitize path/space
     cp "$COV_UCDB" "$_COV_DIR/staging/${stage_name}.ucdb"
 fi
