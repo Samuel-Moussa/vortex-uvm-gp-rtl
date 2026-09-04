@@ -36,6 +36,18 @@
         .join_tmask   (join_tmask)
     );
 
+    // G-4-bind: passive register-hazard coverage probe into every VX_scoreboard
+    // instance (one per issue slot per core). Only clk/reset are connected --
+    // the probe reaches operands_busy/staging_if by their own hierarchical
+    // names from VX_scoreboard's internal g_scoreboard[] generate block and
+    // flat staging_if[] array (see vx_hazard_probe.sv header for why: those
+    // signals are generate-scoped, not module ports, and a bind places the
+    // probe directly in VX_scoreboard's own scope with full visibility).
+    bind VX_scoreboard vx_hazard_probe u_hazard_probe (
+        .clk  (clk),
+        .reset(reset)
+    );
+
     // Bind white-box instruction probe into every VX_dispatch instance
     bind VX_dispatch vx_instr_probe #(.CORE_ID(0)) u_instr_probe (
         .clk        (clk),
