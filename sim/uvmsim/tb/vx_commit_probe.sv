@@ -75,6 +75,37 @@ module vx_commit_probe import VX_gpu_pkg::*; import lockstep_pkg::*; (
     initial if ($test$plusargs("LOCKSTEP"))
         $display("[LS %m] LS_LANES(SIMD_WIDTH)=%0d ISSUE_WIDTH=%0d", LS_LANES, `ISSUE_WIDTH);
 
+    // =========================================================================
+    // G-7: uop / SIMD beat-splitting coverage. sop/eop are already carried in
+    // commit_t (VX_gpu_pkg.sv) at this existing bind point and were previously
+    // completely unsampled -- this probe built no covergroups at all before
+    // this (independent audit, plan §4b). {sop,eop} classifies which beat of a
+    // (possibly multi-beat) instruction retirement this is; crossed with
+    // active-thread occupancy so a genuinely divergent multi-beat retirement
+    // is distinguishable from a uniform single-beat one.
+    // Unconditional (not gated behind +LOCKSTEP) -- this is ordinary functional
+    // coverage, sampled on every real retire like every other covergroup here.
+    // =========================================================================
+    covergroup beat_cg with function sample(logic sop, logic eop, int active_thr);
+        option.per_instance = 1;
+        option.name         = "commit_beat_cg";
+
+        cp_beat_kind : coverpoint {sop, eop} {
+            bins single = { 2'b11 };   // sop && eop  -- ordinary one-beat retirement
+            bins first  = { 2'b10 };   // sop && !eop -- first beat of a multi-beat sequence
+            bins middle = { 2'b00 };   // !sop && !eop -- interior beat
+            bins last   = { 2'b01 };   // !sop && eop -- final beat of a multi-beat sequence
+        }
+
+        cp_active_threads : coverpoint active_thr {
+            bins one_divergent = { 1 };
+            bins partial[]     = { [2 : LS_LANES-1] };
+            bins uniform       = { LS_LANES };
+        }
+
+        cross_beat_threads : cross cp_beat_kind, cp_active_threads;
+    endgroup
+
     // Per-lane passive retire observation. Exposed for bound covergroups (Ahmad).
     // Liveness self-check: per-lane counter proves the bind elaborated + observes
     // real retires. Passive only — never drives the DUT. commit_arb_if must be
@@ -86,6 +117,17 @@ module vx_commit_probe import VX_gpu_pkg::*; import lockstep_pkg::*; (
         always @(posedge clk)
             if (!reset && retire_fire)
                 p1_lane_count[i] <= p1_lane_count[i] + 1;
+
+        beat_cg cg_beat = new();
+        always @(posedge clk) begin
+            if (!reset && retire_fire) begin
+                cg_beat.sample(
+                    commit_arb_if[i].data.sop,
+                    commit_arb_if[i].data.eop,
+                    $countones(commit_arb_if[i].data.tmask)
+                );
+            end
+        end
 
         // -------- A0 lockstep capture (passive, +LOCKSTEP only) -------------
         // Push one dut_retire_s per writeback commit BEAT into this probe's

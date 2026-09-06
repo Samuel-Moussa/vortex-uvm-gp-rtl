@@ -129,6 +129,46 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
     endfunction
 
     // =========================================================================
+    // G-3: divide-corner coverage (div-by-zero, INT_MIN/-1 overflow) -- the two
+    // classic MULDIV bugs, on the same rs1_data/rs2_data already read for G-6.
+    // Mask-qualified the same way as classify_sign: an inactive lane cannot
+    // contribute a corner case. Zero-divisor applies to all four div/rem ops;
+    // INT_MIN/-1 overflow is a SIGNED-only corner (div_edge already drives it
+    // for DIV/REM; it does not apply to DIVU/REMU, so `signed_op` gates it off
+    // there rather than mis-scoring an unsigned pair as "overflow").
+    // =========================================================================
+    typedef enum { DIV_NORMAL, DIV_BY_ZERO, DIV_OVERFLOW, DIV_MIXED } div_special_e;
+
+    function automatic div_special_e classify_div_special(
+        input logic [INST_ALU_BITS-1:0]          op_type,
+        input logic [SIMD_W-1:0][PROBE_XLEN-1:0] rs1_data,
+        input logic [SIMD_W-1:0][PROBE_XLEN-1:0] rs2_data,
+        input logic [SIMD_W-1:0]                 tmask
+    );
+        bit seen_zero, seen_overflow, seen_normal, signed_op;
+        signed_op   = (op_type == INST_M_DIV) || (op_type == INST_M_REM);
+        seen_zero   = 1'b0;
+        seen_overflow = 1'b0;
+        seen_normal = 1'b0;
+        for (int i = 0; i < SIMD_W; i++) begin
+            if (tmask[i]) begin
+                if (rs2_data[i] == '0) begin
+                    seen_zero = 1'b1;
+                end else if (signed_op && rs1_data[i] == {1'b1, {(PROBE_XLEN-1){1'b0}}}
+                                        && rs2_data[i] == {PROBE_XLEN{1'b1}}) begin
+                    seen_overflow = 1'b1;
+                end else begin
+                    seen_normal = 1'b1;
+                end
+            end
+        end
+        if (seen_zero     && !seen_overflow && !seen_normal) return DIV_BY_ZERO;
+        if (seen_overflow && !seen_zero     && !seen_normal) return DIV_OVERFLOW;
+        if (seen_normal   && !seen_zero     && !seen_overflow) return DIV_NORMAL;
+        return DIV_MIXED;
+    endfunction
+
+    // =========================================================================
     // Per-class covergroup TYPES. Each carries only the coverpoints reachable
     // for its EX unit. The shared cp_active_threads / cp_warp definitions are
     // repeated rather than factored out, so each type is self-contained and the
@@ -146,7 +186,8 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         int                       active_thr,
         logic [ISSUE_WIS_W-1:0]   wis,
         sign_class_e              rs1_sign,
-        sign_class_e              rs2_sign
+        sign_class_e              rs2_sign,
+        div_special_e             div_special
     );
         option.per_instance = 1;
         option.name         = "instr_class_cg_alu";
@@ -248,6 +289,17 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         // rs1/rs2 the same way).
         cp_rs1_sign : coverpoint rs1_sign;
         cp_rs2_sign : coverpoint rs2_sign;
+
+        // G-3: div-by-zero / INT_MIN-over-(-1), div_edge already drives both.
+        cp_div_special : coverpoint div_special
+            iff (xtype == ALU_TYPE_MULDIV &&
+                 (op_type == INST_M_DIV  || op_type == INST_M_DIVU ||
+                  op_type == INST_M_REM  || op_type == INST_M_REMU)) {
+            bins normal   = { DIV_NORMAL };
+            bins by_zero  = { DIV_BY_ZERO };
+            bins overflow = { DIV_OVERFLOW };
+            bins mixed    = { DIV_MIXED };
+        }
     endgroup
 
     // ---- LSU ----------------------------------------------------------------
@@ -438,7 +490,11 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
                             $countones(dispatch_if[gi].data.tmask),
                             dispatch_if[gi].data.wis,
                             classify_sign(dispatch_if[gi].data.rs1_data, dispatch_if[gi].data.tmask),
-                            classify_sign(dispatch_if[gi].data.rs2_data, dispatch_if[gi].data.tmask)
+                            classify_sign(dispatch_if[gi].data.rs2_data, dispatch_if[gi].data.tmask),
+                            classify_div_special(dispatch_if[gi].data.op_type,
+                                                  dispatch_if[gi].data.rs1_data,
+                                                  dispatch_if[gi].data.rs2_data,
+                                                  dispatch_if[gi].data.tmask)
                         );
                     end
                 end
