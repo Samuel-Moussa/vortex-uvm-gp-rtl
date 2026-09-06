@@ -71,6 +71,27 @@ class axi_driver extends uvm_driver #(axi_transaction);
     logic [vortex_config_pkg::AXI_ADDR_WIDTH-1:0] ar_flood_addr_q[$];
     logic [vortex_config_pkg::AXI_ID_WIDTH-1:0]   ar_flood_id_q[$];
 
+    // Error-response injection — plusarg-gated (+AXI_INJECT_ERR). Default OFF =>
+    // bresp/rresp are always 2'b00 (OKAY), byte-identical to every prior run.
+    // When ON, every 7th completed transaction on each channel returns an error
+    // instead of OKAY, alternating SLVERR/DECERR so both non-OKAY encodings are
+    // exercised (closes BUS-5 / cp_bresp / cp_rresp0, previously waived as
+    // "no error-inject test" -- W-4). DATA-SAFE BY CONSTRUCTION: the underlying
+    // mem_model read/write this driver performs is completely unaffected --
+    // only the RESP field changes -- and axi_monitor.svh's inline R-beat
+    // compare already guards on `rresp == AXI_OKAY` (skips comparison
+    // otherwise, see its own header comment), so an injected error can never
+    // produce a false data mismatch. This is protocol-layer coverage only.
+    bit inject_err_en = 1'b0;
+    int unsigned inj_r_count = 0;
+    int unsigned inj_w_count = 0;
+
+    function automatic logic [1:0] next_inject_resp(inout int unsigned count);
+        count++;
+        if (!inject_err_en || (count % 7) != 0) return 2'b00;            // AXI_OKAY
+        return ((count / 7) % 2 == 0) ? 2'b10 : 2'b11;                   // SLVERR / DECERR
+    endfunction
+
     //--------------------------------------------------------------------------
     // Constructor
     //--------------------------------------------------------------------------
@@ -109,6 +130,10 @@ class axi_driver extends uvm_driver #(axi_transaction);
         if ($test$plusargs("AXI_FLOOD")) begin
             flood_en = 1'b1;
             `uvm_info("AXI_DRV", "AXI_FLOOD enabled — slave streams read responses back-to-back (forces DUT rready backpressure)", UVM_LOW)
+        end
+        if ($test$plusargs("AXI_INJECT_ERR")) begin
+            inject_err_en = 1'b1;
+            `uvm_info("AXI_DRV", "AXI_INJECT_ERR enabled — every 7th B/R response returns SLVERR/DECERR instead of OKAY", UVM_LOW)
         end
     endfunction
 
@@ -248,7 +273,7 @@ class axi_driver extends uvm_driver #(axi_transaction);
             if (!vif.bvalid && b_resp_q.size() > 0) begin
                 vif.bvalid <= 1'b1;
                 vif.bid    <= b_resp_q[0];
-                vif.bresp  <= 2'b00;
+                vif.bresp  <= next_inject_resp(inj_w_count);
                 num_writes_served++;
                 b_timeout_counter = 0;
             end else if (vif.bvalid && !vif.bready) begin
@@ -288,7 +313,7 @@ class axi_driver extends uvm_driver #(axi_transaction);
                 vif.rvalid        <= 1'b1;
                 vif.rid           <= vif.arid;
                 vif.rdata         <= memory.read_line(vif.araddr);
-                vif.rresp         <= 2'b00;
+                vif.rresp         <= next_inject_resp(inj_r_count);
                 vif.rlast         <= (vif.arlen == 8'h0);
                 num_reads_served++;
 
