@@ -86,6 +86,49 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
     localparam int PROBE_XLEN = XLENB * 8;
 
     // =========================================================================
+    // G-6: operand-value coverage. dispatch_t already carries rs1_data/rs2_data/
+    // rs3_data as per-SIMD-lane arrays (VX_gpu_pkg.sv:627-629) at this probe's
+    // existing bind point -- a covergroup edit, not a new probe or RTL change.
+    // Before this, L2 had ZERO coverpoints reading an operand value anywhere
+    // (independent audit, plan §4b).
+    //
+    // classify_sign reduces one SIMD-wide operand to a 4-way class, masked by
+    // the ACTIVE lanes only (tmask) -- an inactive lane's data is a don't-care,
+    // not a zero, and must not be allowed to pollute the classification:
+    //   ZERO / POS / NEG   : every active lane agrees on that category
+    //   MIXED              : active lanes disagree -- itself a real SIMT fact
+    //                        (this operand genuinely diverges in VALUE, not
+    //                        just in whether the lane is active at all)
+    // The MSB-based neg test doubles correctly as the IEEE-754 sign bit for a
+    // 32-bit float operand (sign is bit 31 either way, including -0.0), so this
+    // is reused as-is for the FPU class below. It is NOT a full float-special
+    // classifier (NaN/Inf/denorm) -- that is a separate, larger follow-up
+    // (plan G-6's cp_fp_class), deliberately not attempted here.
+    // =========================================================================
+    typedef enum { SIGN_ZERO, SIGN_POS, SIGN_NEG, SIGN_MIXED } sign_class_e;
+
+    function automatic sign_class_e classify_sign(
+        input logic [SIMD_W-1:0][PROBE_XLEN-1:0] data,
+        input logic [SIMD_W-1:0]                 tmask
+    );
+        bit seen_pos, seen_neg, seen_zero;
+        seen_pos  = 1'b0;
+        seen_neg  = 1'b0;
+        seen_zero = 1'b0;
+        for (int i = 0; i < SIMD_W; i++) begin
+            if (tmask[i]) begin
+                if (data[i] == '0)         seen_zero = 1'b1;
+                else if (data[i][PROBE_XLEN-1]) seen_neg = 1'b1;
+                else                       seen_pos  = 1'b1;
+            end
+        end
+        if (seen_pos  && !seen_neg && !seen_zero) return SIGN_POS;
+        if (seen_neg  && !seen_pos && !seen_zero) return SIGN_NEG;
+        if (seen_zero && !seen_pos && !seen_neg)  return SIGN_ZERO;
+        return SIGN_MIXED;
+    endfunction
+
+    // =========================================================================
     // Per-class covergroup TYPES. Each carries only the coverpoints reachable
     // for its EX unit. The shared cp_active_threads / cp_warp definitions are
     // repeated rather than factored out, so each type is self-contained and the
@@ -101,7 +144,9 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         logic [INST_ALU_BITS-1:0] op_type,
         logic [ALU_TYPE_BITS-1:0] xtype,
         int                       active_thr,
-        logic [ISSUE_WIS_W-1:0]   wis
+        logic [ISSUE_WIS_W-1:0]   wis,
+        sign_class_e              rs1_sign,
+        sign_class_e              rs2_sign
     );
         option.per_instance = 1;
         option.name         = "instr_class_cg_alu";
@@ -196,13 +241,21 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         }
 
         cp_warp : coverpoint wis;
+
+        // G-6: operand-value coverage, mask-qualified (see classify_sign above).
+        // Ungated -- meaningful across arith/branch/muldiv/vote-shfl alike (a
+        // branch's outcome, a compare's result and a vote's condition all read
+        // rs1/rs2 the same way).
+        cp_rs1_sign : coverpoint rs1_sign;
+        cp_rs2_sign : coverpoint rs2_sign;
     endgroup
 
     // ---- LSU ----------------------------------------------------------------
     covergroup lsu_class_cg with function sample(
         logic [INST_ALU_BITS-1:0] op_type,   // op_type is one shared-width field across classes
         int                       active_thr,
-        logic [ISSUE_WIS_W-1:0]   wis
+        logic [ISSUE_WIS_W-1:0]   wis,
+        sign_class_e              rs2_sign   // store-data value; base address (rs1) not covered here
     );
         option.per_instance = 1;
         option.name         = "instr_class_cg_lsu";
@@ -227,6 +280,8 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         }
 
         cp_warp : coverpoint wis;
+
+        cp_rs2_sign : coverpoint rs2_sign;   // store-data sign; rs1 (address) not covered here on purpose
     endgroup
 
     // ---- SFU (richest: SIMT control + barriers + CSR) -----------------------
@@ -287,7 +342,10 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
     covergroup fpu_class_cg with function sample(
         logic [INST_ALU_BITS-1:0] op_type,   // shared-width op_type field
         int                       active_thr,
-        logic [ISSUE_WIS_W-1:0]   wis
+        logic [ISSUE_WIS_W-1:0]   wis,
+        sign_class_e              rs1_sign,
+        sign_class_e              rs2_sign,
+        sign_class_e              rs3_sign   // FMA accumulator operand (fmadd/fnmadd/fnmsub)
     );
         option.per_instance = 1;
         option.name         = "instr_class_cg_fpu";
@@ -321,6 +379,16 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
         }
 
         cp_warp : coverpoint wis;
+
+        // G-6, float operands. classify_sign's MSB test is the IEEE-754 sign bit
+        // for a 32-bit float operand (bit 31 either way, -0.0 included) -- this is
+        // sign coverage only, NOT the fuller NaN/Inf/denorm classification the
+        // plan's cp_fp_class calls for; that is a deliberately separate follow-up.
+        // rs3 only samples meaningfully for fmadd/fnmadd (op_type-gated so the
+        // other ops don't contribute a meaningless rs3 bin).
+        cp_rs1_sign : coverpoint rs1_sign;
+        cp_rs2_sign : coverpoint rs2_sign;
+        cp_rs3_sign : coverpoint rs3_sign iff (op_type == INST_FPU_MADD || op_type == INST_FPU_NMADD);
     endgroup
 
     // ---- TCU (no op-decode: only INST_TCU_WMMA exists) ----------------------
@@ -368,7 +436,9 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
                             dispatch_if[gi].data.op_type,
                             dispatch_if[gi].data.op_args.alu.xtype,
                             $countones(dispatch_if[gi].data.tmask),
-                            dispatch_if[gi].data.wis
+                            dispatch_if[gi].data.wis,
+                            classify_sign(dispatch_if[gi].data.rs1_data, dispatch_if[gi].data.tmask),
+                            classify_sign(dispatch_if[gi].data.rs2_data, dispatch_if[gi].data.tmask)
                         );
                     end
                 end
@@ -381,7 +451,8 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
                         cg.sample(
                             dispatch_if[gi].data.op_type,
                             $countones(dispatch_if[gi].data.tmask),
-                            dispatch_if[gi].data.wis
+                            dispatch_if[gi].data.wis,
+                            classify_sign(dispatch_if[gi].data.rs2_data, dispatch_if[gi].data.tmask)
                         );
                     end
                 end
@@ -407,7 +478,10 @@ module vx_instr_probe import VX_gpu_pkg::*; #(
                         cg.sample(
                             dispatch_if[gi].data.op_type,
                             $countones(dispatch_if[gi].data.tmask),
-                            dispatch_if[gi].data.wis
+                            dispatch_if[gi].data.wis,
+                            classify_sign(dispatch_if[gi].data.rs1_data, dispatch_if[gi].data.tmask),
+                            classify_sign(dispatch_if[gi].data.rs2_data, dispatch_if[gi].data.tmask),
+                            classify_sign(dispatch_if[gi].data.rs3_data, dispatch_if[gi].data.tmask)
                         );
                     end
                 end
