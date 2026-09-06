@@ -48,6 +48,22 @@
         .reset(reset)
     );
 
+    // G-9-bind: passive LMEM (scratchpad) bank-conflict coverage probe.
+    // NUM_REQS/NUM_BANKS/req_bank_idx/mem_bus_if are the bound instance's OWN
+    // elaborated parameters/signals, passed through explicitly (same pattern
+    // as the coalescer probe below) -- unlike vx_hazard_probe's interface/
+    // generate-block-member technique, a bare module-local parameter or wire
+    // is not resolvable by Questa's vlog pass until elaboration.
+    bind VX_local_mem vx_lmem_probe #(
+        .NUM_REQS (NUM_REQS),
+        .NUM_BANKS(NUM_BANKS)
+    ) u_lmem_probe (
+        .clk         (clk),
+        .reset       (reset),
+        .req_bank_idx(req_bank_idx),
+        .mem_bus_if  (mem_bus_if)
+    );
+
     // Bind white-box instruction probe into every VX_dispatch instance
     bind VX_dispatch vx_instr_probe #(.CORE_ID(0)) u_instr_probe (
         .clk        (clk),
