@@ -20,12 +20,21 @@
 // `mem_bus_if[i].req_data.addr[0 +: BANK_SEL_BITS]`) — reused as-is, never
 // re-derived, so this can never disagree with what the hardware actually does.
 //
-// A "conflict" is >=2 of this cycle's ACCEPTED (req_valid && req_ready)
-// per-lane requests mapping to the SAME bank. The RTL's own crossbar (a
-// single OUT_REG-buffered slot per bank) can only accept one winner per bank
-// per cycle, so a conflict here is exactly the scratchpad contention this
-// plan item exists to observe — `lmem_stress` already runs a kernel meant to
-// stress this and previously scored nothing functional (plan G-9).
+// A "conflict" is >=2 of this cycle's OFFERED (req_valid alone, NOT
+// req_valid && req_ready) per-lane requests mapping to the SAME bank -- i.e.
+// arbitration PRESSURE, not simultaneous acceptance. OBS-060
+// (docs/RTL_OBSERVATIONS.md): the RTL's own crossbar (VX_local_mem.sv
+// instantiates VX_stream_xbar with NUM_OUTPUTS=NUM_BANKS, and
+// VX_stream_xbar.sv declares exactly one valid_out/data_out per OUTPUT port)
+// can structurally accept at most ONE winner per bank per cycle -- so
+// gating this bin on req_ready made "2+ accepted same bank same cycle" a
+// logical impossibility, not a rare stimulus event, and the bin could never
+// go non-zero no matter how bank-hostile the access pattern was (measured:
+// idle=70498, no_conflict=192, conflict=0 under deliberate 4-way same-bank
+// contention). Reclassifying on req_valid alone measures the real,
+// reachable property this plan item wants: did 2+ lanes WANT the same bank
+// this cycle, whether or not the arbiter picked a winner -- exactly the
+// scratchpad contention `lmem_stress` is meant to stress (plan G-9).
 //
 // Read-only by discipline: `mem_bus_if` takes the `.slave` modport (matching
 // VX_local_mem's own role) purely so this module can READ req_valid/
@@ -49,9 +58,9 @@ module vx_lmem_probe #(
         option.name         = "lmem_bank_cg";
 
         cp_bank_conflict : coverpoint conflict_class {
-            bins idle        = { LMEM_IDLE };        // no accepted request this cycle
-            bins no_conflict = { LMEM_NO_CONFLICT };  // requests accepted, all distinct banks
-            bins conflict    = { LMEM_CONFLICT };     // >=2 accepted requests, same bank
+            bins idle        = { LMEM_IDLE };        // no request offered this cycle
+            bins no_conflict = { LMEM_NO_CONFLICT };  // requests offered, all distinct banks
+            bins conflict    = { LMEM_CONFLICT };     // >=2 requests offered, same bank (OBS-060: offered, not accepted)
         }
     endgroup
 
@@ -61,9 +70,15 @@ module vx_lmem_probe #(
     // `for` loop variable is rejected by elaboration. Extract the one bit per
     // lane this probe needs into a flat vector here (generate context), then
     // do the actual aggregation below on ordinary arrays with a runtime loop.
-    wire [NUM_REQS-1:0] lane_accept;
-    for (genvar i = 0; i < NUM_REQS; i++) begin : g_lane_accept
-        assign lane_accept[i] = mem_bus_if[i].req_valid && mem_bus_if[i].req_ready;
+    //
+    // OBS-060: this is req_valid ALONE (offered), not req_valid && req_ready
+    // (accepted) -- see the header comment. Using req_ready here would make
+    // cp_bank_conflict.conflict structurally unreachable, since the RTL's
+    // own crossbar (VX_stream_xbar, NUM_OUTPUTS=NUM_BANKS) can accept at
+    // most one winner per bank per cycle by construction.
+    wire [NUM_REQS-1:0] lane_offer;
+    for (genvar i = 0; i < NUM_REQS; i++) begin : g_lane_offer
+        assign lane_offer[i] = mem_bus_if[i].req_valid;
     end
 
     always @(posedge clk) begin
@@ -75,7 +90,7 @@ module vx_lmem_probe #(
             any_conflict = 1'b0;
             for (int b = 0; b < NUM_BANKS; b++) bank_count[b] = 0;
             for (int i = 0; i < NUM_REQS; i++) begin
-                if (lane_accept[i]) begin
+                if (lane_offer[i]) begin
                     any_active = 1'b1;
                     bank_count[req_bank_idx[i]]++;
                     if (bank_count[req_bank_idx[i]] > 1) any_conflict = 1'b1;

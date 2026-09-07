@@ -1,6 +1,28 @@
 # Vortex UVM — Technical Dossier
 ### Complete project evaluation, deep technical detail, and measured results
-*Compiled 2026-08-25 from primary sources: `docs/paper/vortex_uvm_paper.tex`, `docs/RTL_OBSERVATIONS.md` (48 entries), `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, and the live environment at `Vortex/sim/uvmsim/`. Every figure below is a measured, banked result — nothing projected.*
+*Originally compiled 2026-08-25; **revised 2026-09-07** against primary sources: `docs/paper/vortex_uvm_paper.tex`, `docs/RTL_OBSERVATIONS.md`, `docs/VERIFICATION_PLAN_v2.md`, `docs/RISCVISACOV_STATUS.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, and the live environment at `Vortex/sim/uvmsim/`. Every figure below is a measured, banked result — nothing projected.*
+
+---
+
+**REVISION NOTE — 2026-09-07.** Every count in this dossier was re-derived from source on this
+date, not carried forward. Five figures moved and one entire contribution was missing:
+
+| | was (2026-08-25) | **is (re-measured 2026-09-07)** | how |
+|---|---|---|---|
+| RTL observations | 48 | **56** (`OBS-001`…`OBS-057`; 048 unused as an entry) | `grep -oE "^#+ OBS-[0-9]{3}"` |
+| SV/UVM source | 80 files, 21,510 lines | **88 files, 22,562 lines** | `find uvm_env tb uvm_tests \| wc -l` |
+| Our covergroups | 17 | **23** | distinct `covergroup` declarations in `tb/` + `uvm_env/` |
+| Passive taps | 5 rows listed | **11** (10 probes + RVVI shim) | file inventory, §3.3 |
+| ISA-layer coverage | *(absent)* | **429/516 = 83.14%** | `cov/isacov_gaphunt/` |
+
+**The material addition is PART III-B — the RVVI/riscvISACOV layer**, which post-dates the
+original compilation and is now the project's *headline* contribution. The 2026-08-25 text
+positioned SIMT lockstep as the centerpiece; that work is unchanged and still the deepest
+technical result, but the contribution most defensible as *novel* is now the standards
+extension. Both are presented, with the relationship between them stated explicitly.
+
+Findings, methodology and the R1–R10 narrative below are unchanged except where a newer
+measurement supersedes them — each such point is marked **⟨updated 2026-09-07⟩** inline.
 
 ---
 
@@ -8,7 +30,18 @@
 
 ## 1.1 The one-sentence claim
 
-> **A complete, fully configurable UVM verification environment for a RISC-V GPGPU whose checking depth reaches RVVI-style per-instruction lockstep against a stepping functional reference model — to the project's knowledge, the first such flow for a SIMT architecture — with every verdict class proven non-vacuous by permanent fault injection, 94.7% total coverage using only machine-generated RTL-cited exclusions, and ten catalogued RTL defects including an unknown-reset X-propagation bug still present upstream.**
+> **A complete, fully configurable UVM verification environment for a RISC-V GPGPU that extends the open RISC-V verification standards — RVVI-TRACE — to SIMT at their documented assumption boundary, and thereby attaches an *unmodified* third-party ISA coverage VIP (Imperas/OpenHW riscvISACOV) to a GPU; whose checking depth reaches per-instruction lockstep against a stepping functional reference model with every verdict class proven non-vacuous by permanent fault injection; with 94.7% total code coverage using only machine-generated RTL-cited exclusions, 83.1% third-party ISA-behaviour coverage, and ten promoted RTL findings out of 56 catalogued — including an unknown-reset X-propagation bug still present upstream.** ⟨updated 2026-09-07⟩
+
+**Two contributions, deliberately kept distinct** — conflating them is the easiest way to lose credibility on either:
+
+| | **the standards contribution** | **the depth contribution** |
+|---|---|---|
+| what it is | RVVI-TRACE extended with warp ID, thread mask and per-lane data; third-party ISA coverage VIP attached without forking it | per-instruction, per-active-lane lockstep against SimX, with five SIMT alignment rules and a two-pass load-value feed |
+| why it is novel | all three open RISC-V verification standards (RVVI, riscvISACOV, ImperasDV) assume **one hart, one instruction, one architectural context** — a warp is *N* contexts under a mask | end-state comparison is the academic norm for GPU verification; this reaches instruction granularity |
+| what it is evidence of | that the RISC-V verification ecosystem can be made to reach SIMT machines at all | that *this* GPU was checked deeply, not just at its final memory image |
+| the honest limit | the VIP is **structurally blind to the thread mask** — proven, §III-B.4 | SimX is **co-designed with the RTL**, therefore not independent — §2.3 |
+
+**On "first published":** the defensible framing is narrow — *an open-source UVM environment for a RISC-V-based GPGPU that extends RVVI to SIMT and integrates a third-party ISA coverage VIP.* Avoid unqualified "first ever"; prior theoretical work exists.
 
 ## 1.2 Why this is not "another UVM testbench"
 
@@ -20,16 +53,21 @@ Three properties separate this from a coursework-grade environment, and each is 
 
 ## 1.3 Scale of the artifact
 
+*All figures below re-measured 2026-09-07 from the working tree.* ⟨updated 2026-09-07⟩
+
 | Dimension | Measured |
 |---|---|
-| SystemVerilog / UVM source | **80 files, 21,510 lines** (`uvm_env/`, `tb/`, `uvm_tests/`) |
+| SystemVerilog / UVM source | **88 files, 22,562 lines** (`uvm_env/`, `tb/`, `uvm_tests/`) |
 | UVM agents | **5** — host, DCR, AXI, memory, status |
-| Functional covergroups | **17**, each with a written sufficiency rationale |
-| Directed kernels authored | **~30**, all byte-exact vs. reference |
+| Passive RTL taps | **11** — 10 `bind`-attached probes + 1 RVVI publication shim, **zero RTL modifications** |
+| Our functional covergroups (L2/L3) | **23**, each with a written sufficiency rationale |
+| Third-party ISA covergroups (L1) | **80**, generated from Imperas' own DV plans across **5 extensions**, VIP **unforked** |
+| Feature areas decomposed | **53** in `docs/VERIFICATION_PLAN_v2.md`, GPU-first (11 SIMT · 4 issue/scoreboard · 10 execution · 14 memory · 8 bus · 3 multi-core · 2 termination · 1 waived) |
+| Directed kernels authored | **~30**, all byte-exact vs. reference (incl. `isacov_fill`, purpose-built for L1 gap-hunt) |
 | Constrained-random profiles | **12** riscv-dv seed profiles (+2 excluded as *unimplementable*, with reason) |
 | AXI4 SVA properties | **~15–18 protocol + 11 handshake-stability** assertions |
-| RTL observations catalogued | **48** (`OBS-001`…`OBS-048`), each with evidence + disposition |
-| Coverage banks | **3** independent configurations, never blended |
+| RTL observations catalogued | **56** (`OBS-001`…`OBS-057`; 048 unused), each with evidence + disposition |
+| Coverage banks | **3** topology banks + a separate L1 ISA bank, **never blended** |
 | Papers written | **2** (full + condensed ~8pp), IEEE format, compiled |
 | Packaging | Upstream-shaped backend at `Vortex/sim/uvmsim/`, peer to `sim/simx`, `sim/rtlsim` |
 
@@ -103,13 +141,23 @@ Merging them would let an unconverted abort site masquerade as a clean halt.
 
 **All white-box visibility is bound, passive, and never a checker.** This is a deliberate methodological line: probes provide *observability*, scoreboards render *verdicts*.
 
-| Probe | Bound to | Captures |
-|---|---|---|
-| **commit probe** | Retire arbiter of **every core** | Per retirement beat: `{uuid, wid, PC, rd, wb, tmask, per-lane data}` across all clusters/sockets/cores/issue lanes |
-| **LSU writeback probe** | Load-store slice | True per-lane load values *after sign/zero extension* — required because load data never reaches the commit arbiter (finding R8) |
-| **DCR probe** | `VX_dcr_data` | Peek-only backdoor read path (the DCR bus is **write-only** in RTL — no frontdoor read exists) |
-| **cache probe** | Cache banks | 8 instances, config-aware *by construction* |
-| **scheduler + instruction-class probes** | Various | Functional coverage feed |
+**Full inventory — 11 taps, every one attached by `bind`, zero RTL modifications.** ⟨updated 2026-09-07 — was 5 rows; the last four probes and the shim post-date the original compilation⟩
+
+| # | Tap | Bound to | Captures |
+|---|---|---|---|
+| 1 | `vx_commit_probe` | `VX_commit` — retire arbiter of **every core** | Per retirement beat: `{uuid, wid, PC, rd, wb, tmask, per-lane data}` across all clusters/sockets/cores/issue lanes. Also `beat_cg`: SIMD beat splitting (`sop`/`eop` → single/first/middle/last) crossed with active-thread occupancy |
+| 2 | `vx_instr_probe` | `VX_dispatch` | Per-execution-unit instruction classes, **operation-decoded**; thread masks; warp IDs; operand-value classes (sign, divide-corner, IEEE-754 FP class) |
+| 3 | `vx_sched_probe` | `VX_schedule` | Divergence depth, split/join, barriers, warp state, IPDOM reconvergence |
+| 4 | `vx_lsu_probe` | `VX_lsu_slice` | True per-lane load values *after* sign/zero extension — required because load data never reaches the commit arbiter (finding **R8**) |
+| 5 | `vx_cache_probe` | `VX_cache_bank` | Hit/miss, MSHR stall, per bank; 8 instances, config-aware *by construction* |
+| 6 | `vx_dcr_probe` | `VX_dcr_data` | Peek-only backdoor read path — the DCR bus is **write-only** in RTL, so no frontdoor read exists (§6.4) |
+| 7 | `vx_coalescer_probe` | `VX_mem_coalescer` | Memory-coalescing behaviour (closed gap G-0, **OBS-051**) |
+| 8 | `vx_hazard_probe` | `VX_scoreboard` | **Register hazards** — RAW/WAW. Yielded the structural result **OBS-055**: WAR is unreachable by construction (§8.5) |
+| 9 | `vx_lmem_probe` | `VX_local_mem` | Scratchpad **bank-conflict** detection, reusing the RTL's own `req_bank_idx` decode rather than re-deriving it |
+| 10 | `vx_instr_word_probe` | `VX_fetch` | Raw fetched instruction words — cross-checks that the disassembly being scored *is the binary that actually ran* (§III-B.3) |
+| 11 | `vortex_rvvi_shim` | `VX_commit` | Publishes extended **RVVI-TRACE**; the third-party ISA-coverage attach point (§III-B) |
+
+Taps 7–11 and `beat_cg` on tap 1 were added 2026-09-03…09-06 to close catalogued observability gaps; each was verified **non-vacuous** (its bins move on a targeted kernel) and **non-perturbing** (identical cycle and instruction counts to the pre-change baseline) before being accepted.
 
 An **RVVI-style interface and UVM monitor** publishes the merged retirement stream through an analysis port, following the core-v-verif `uvma_rvvi` pattern — deliberately aligning with industry convention rather than inventing a private format.
 
@@ -135,9 +183,104 @@ Refinements: per-byte validity masking for sub-word stores; IEEE-rounding-legiti
 
 An AXI4 SVA layer (~15–18 protocol properties + 11 handshake-stability assertions) checks burst legality, outstanding-count consistency, and signal stability under backpressure, inline on the DUT's AXI interface.
 
-Two slave-side stress modes, both plusarg-gated and **proven byte-identical when off**:
-- **throttle** — injects ready wait-states, exercising `aw`/`w`/`ar` stability properties (moved those assertions 84.78% → 93%).
-- **flood** — streams R beats back-to-back, forcing internal backpressure.
+Three slave-side stress modes, all plusarg-gated and **proven byte-identical when off**:
+- **throttle** (`+AXI_THROTTLE`) — injects ready wait-states, exercising `aw`/`w`/`ar` stability properties (moved those assertions 84.78% → 93%).
+- **flood** (`+AXI_FLOOD`) — streams R beats back-to-back, forcing internal backpressure.
+- **error injection** (`+AXI_INJECT_ERR`) ⟨added 2026-09-06⟩ — returns `SLVERR`/`DECERR` on every 7th B/R response. This produced **OBS-057** (§8.6) and closed four SVA `cover` properties that had been written and never fired.
+
+---
+
+# PART III-B — RVVI EXTENDED TO SIMT, AND A THIRD-PARTY ISA VIP ON A GPU ⭐⭐ *the standards contribution*
+
+*This part post-dates the original 2026-08-25 compilation and is the project's headline novelty claim.* ⟨added 2026-09-07⟩
+
+## III-B.1 The gap, stated precisely
+
+Three open standards exist for RISC-V processor verification. **All three assume a scalar core** — one hart, executing one instruction, holding one architectural context:
+
+| standard | what it is | the scalar assumption |
+|---|---|---|
+| **RVVI-TRACE** | the retirement-trace interface | one record per hart: one PC, one destination register, one value |
+| **riscvISACOV** | Imperas/OpenHW functional-coverage VIP; covergroups generated from the ratified ISA | one instruction, one set of operands |
+| **ImperasDV** | the commercial reference-model / verdict flow | one architectural context |
+
+**A warp is *N* architectural contexts executing one instruction under a thread mask.** One record per hart cannot carry that. This is not an implementation inconvenience — it is the interface's stated assumption, and it is exactly where the extension had to be made.
+
+## III-B.2 What was done
+
+RVVI-TRACE was extended **at its documented assumption boundary** — adding warp ID, thread mask and per-lane data — and the unmodified third-party coverage VIP was attached to the extended interface.
+
+> **The VIP was never forked.** Five ISA extensions were generated from Imperas' own DV plans, and **80 of its covergroups run against a GPU.**
+
+That is the claim, and it is the narrowest form that is still true: *the open RISC-V verification standards were extended to a SIMT machine, and a third-party ISA coverage VIP was made to work against a GPU without modifying it.*
+
+## III-B.3 The mechanism — and the non-obvious discovery that made it cheap
+
+```
+kernel.elf --objdump--> PC-keyed disassembly map --.
+                                                    +--> riscvISACOV covergroups
+VX_commit retirement --> vortex_rvvi_shim --> rvviTrace
+VX_fetch  instr word --> vx_instr_word_probe --> cross-check the map
+```
+
+**The discovery: riscvISACOV keys on disassembly *text*, not the instruction word.** `RISCV_coverage_base.svh:1381` does `$sscanf(disass,"%s %s %s")` and returns the second token; `RISCV_instruction_base.svh:119` parses register numbers out of that same string.
+
+**Proven empirically rather than inferred:** the *identical* retirement scored **0.00%** with `disass="addi x5,x0,10"` and **2.55%** with `"00a00293 addi x5,x0,10"` — the leading hex word is load-bearing.
+
+**Consequence: no new decode logic was needed.** Every kernel already ships a `.dump`, and `objdump -d -M numeric,no-aliases` emits exactly the required form. **Both flags are load-bearing** — `numeric` because the model tests `ops[i].key[0]=="x"`, `no-aliases` because pseudo-instructions match no covergroup. Vortex's custom SIMT ops render as `.4byte 0x...` and correctly match nothing, which is the desired behaviour rather than a failure.
+
+**Why tap 10 exists.** `vx_instr_word_probe` answers exactly one question: *is the disassembly being scored the binary that actually ran?* It compares the fetched word against the map's word at every PC. This is not hypothetical caution — **the project had already been burned by a stale ELF surviving a source change** (`fft_par16`, 2026-09-01). Result on every run since: **0 map misses / 0 word mismatches.**
+
+**Supporting artifacts built:** a dvplan→SystemVerilog generator (`gen/gen_ext_coverage.py`) because Imperas publishes DV plans for all 143 extensions but source for only one; 61 lines of `idvPkg`/`idvApiPkg` stubs; our own `rvviRefCsrIndex` in DPI-C; a shadow stub for a shipped-but-missing `RISCV_coverage_vectors.svh`; and a new `csr_probe` kernel covering all six Zicsr forms.
+
+## III-B.4 ⭐ The three-layer coverage model — and the disjointness proof
+
+The central methodological finding: **our coverage model and the third-party ISA model share no bin at all.** That is not redundancy to eliminate; it is a layering to make explicit.
+
+| layer | question it answers | owner | blind to |
+|---|---|---|---|
+| **L1 — ISA** | was the *instruction space* exercised? mnemonic, register index, operand sign, immediate | **riscvISACOV** — third party, independent | **everything SIMT** |
+| **L2 — microarchitecture / SIMT** | was the *machine* exercised? warps, masks, divergence, coalescing, banks, hazards, caches | **ours** (23 covergroups) | operand values, per-mnemonic identity |
+| **L3 — system / protocol** | was the *interface* legal and stressed? | **ours** (SVA + collector) | — |
+
+**That L1 and L2 are disjoint was proven, not assumed.** The VIP was run in two modes on the same kernel: `+ISACOV_MODE=A` (lane-as-hart, **4,581 lane samples**) and `MODE=B` (lane 0 only, **1,677 samples**). Both cover the **identical bin set** — only hit counts differ. Banked as `cov/bank_2CL_2C_4W_4T_ISACOV_{with,without}_20260904`.
+
+> **SIMT lane diversity buys zero ISA-coverage bins. The third-party VIP is structurally blind to the thread mask** — which is precisely why L2 exists and why the two must never be merged.
+
+**Rule: never merge L1 and L2 UCDBs; never quote a blended number.** Different denominators over different axes.
+
+## III-B.5 The L1 result, and the honest denominator argument
+
+| stage | bins | coverage |
+|---|---|---|
+| raw, everything included | 1,444/6,469 | 22.32% |
+| + structurally unreachable excluded (**EUR**) | 1,444/6,467 | 22.33% — *hit count unchanged, machine-gated* |
+| **+ register-index bins excluded (EOTH) — the quotable figure** | **429/516** | **83.14%** (89.28% weighted) |
+
+**78 of 80 covergroups carry real coverage.** The campaign drove this from a standing start: `vecadd_lite` baseline (546 bins) → directed kernels → the purpose-built `isacov_fill` kernel → 1,444 bins.
+
+**Why register-index bins are excluded — state this on the slide, never hide it.** `*_reg_assign` coverpoints ask *which* architectural register served as rd/rs1/rs2. They are **92% of the raw denominator** (5,951 of 6,469 bins), and they are excluded as a **stated scope decision, not an unreachability claim**:
+
+1. Vortex's register file is a **banked RAM with uniform indexing** — `x5` versus `x6` is structurally symmetric; there is no per-index logic that could break.
+2. **Which register the compiler allocates is a property of the compiler, not the DUT.** Reaching `x28` means manufacturing register pressure, which verifies nothing about the hardware.
+3. Leaving them in makes the aggregate a measurement of the compiler's register allocator rather than of the design.
+
+This is standard practice in CPU DV; OpenHW take the same position.
+
+**The two exclusion classes are deliberately kept separate and differently labelled** so the distinction cannot be blurred:
+
+- **EUR — structurally unreachable.** Asserts the bins *cannot* be hit, so removing them must change the **denominator only**. `apply_isacov_exclude.sh` **fails the run** if a structural exclusion moves the hit count. It passed: 1,444 hits before and after. Two members: `rv32zifencei_fence_i_cg` (**OBS-050** — `VX_decode.sv:291` never inspects `funct3`, so `fence.i` decodes identically to a data `fence` and `INST_FENCE_I` is a dead localparam) and `rv32i_nop_cg` (`nop` is a disassembler *alias*, and the map is generated with `-M no-aliases`, so it can never appear).
+- **EOTH — reachable but out of scope by decision.** The `*_reg_assign` class above. **Not** hits-invariant, and never gated as if it were.
+
+> The **EUR/EOTH split is itself the deliverable here.** Anyone can raise a percentage by excluding bins; the defensible move is to make the *kind* of exclusion machine-checkable and to let the two numbers be inspected separately.
+
+## III-B.6 What the ISA layer bought that our own model lacked
+
+Worth being concrete, because "we added a third-party VIP" invites *"and did it find anything?"*:
+
+- **`cp_asm_count`** — a real granularity gain: per-mnemonic instruction identity, which our unit-class model deliberately abstracts away.
+- **`cp_*_sign`, `cp_imm_value`** — operand-value coverage, where **we had nothing at all**. This directly motivated adding the equivalent to *our* L2 model (operand sign, divide corners, IEEE-754 class on taps 1–2), so the layers now inform each other rather than merely coexisting.
+- **Four silent failures were hit during integration, none of which announced itself** — the disassembly-text keying above being the most costly. Each is catalogued in `docs/RISCVISACOV_STATUS.md §8`.
 
 ---
 
@@ -350,9 +493,18 @@ The counter-check that confirmed it: `rsp_data.data` toggles 45–46× on all 51
 
 > **The claim was corrected in the papers when measurement contradicted it.** Being able to point at a place where you falsified your own published claim is a strong credibility signal.
 
-## 7.3 Functional model — 17 covergroups
+## 7.3 Functional model — 23 covergroups ⟨updated 2026-09-07, was 17⟩
 
 Spanning: instruction classes **per execution unit** (ALU / FPU / LSU / SFU / TCU, **operation-decoded**, not class-level); SIMT divergence crossed with **IPDOM reconvergence depth**; warp/thread-mask crosses; barrier / `wspawn` / `tmc` behavior; a **stall taxonomy crossed with IPC buckets**; AXI fields; DCR and host launch spaces; system state. **Each with a written sufficiency rationale** (`docs/Coverage_Model_Reference.md`).
+
+Measured inventory: `alu_class_cg`, `axi_transaction_cg`, `barrier_cg`, `beat_cg`, `cache_event_cg`, `coalesce_cg`, `dcr_config_cg`, `dcr_write_cg`, `divergence_cg`, `fpu_class_cg`, `hazard_cg`, `host_operation_cg`, `lmem_bank_cg`, `lsu_class_cg`, `mem_operation_cg`, `reconverge_cg`, `sched_state_cg`, `sfu_class_cg`, `status_performance_cg`, `system_cg`, `tcu_class_cg`, `tmc_cg`, `wspawn_cg`.
+
+**The six added 2026-09-03…09-06** (`beat_cg`, `hazard_cg`, `lmem_bank_cg`, `coalesce_cg`, plus the operand-value coverpoints inside `alu_class_cg`/`fpu_class_cg`/`lsu_class_cg`) each closed a catalogued gap. Two produced results worth quoting on their own:
+
+- **`hazard_cg` → OBS-055**: RAW and WAW populate; **WAR never can** (§8.5).
+- **`beat_cg`**: 4/4 bins real on the first run (`vecadd_lite`: single=1609, first=68, middle=136, last covered) — on a probe that had carried **zero covergroups** before.
+
+**Honest open bins, deliberately left red rather than waived:** `lmem_bank_cg`'s `conflict` bin (the stressing kernel's access pattern is bank-friendly *by construction*; closing it needs a bank-hostile kernel), the "pure" `by_zero`/`overflow` divide corners (per-lane operand rotation means lanes rarely hit the identical corner simultaneously), and `cp_fp_class`'s `zero`/`inf`/`nan` (need dedicated special-value stimulus). Notably `cp_fp_class`'s **`denorm` bin went real organically** — a genuine denormal arose in `fpu_test` and was classified correctly by the IEEE-754 field decode.
 
 ## 7.4 Results — three independent banks, never blended
 
@@ -374,13 +526,24 @@ Spanning: instruction classes **per execution unit** (ALU / FPU / LSU / SFU / TC
 
 **Third bank:** L2/L3 shared-cache tiers enabled — **51 runs, all passing, 93.2% total.**
 
+**Fourth, separate bank — L1 ISA layer** ⟨added 2026-09-07⟩: `cov/isacov_gaphunt/`, **429/516 = 83.14%** (89.28% weighted), 78/80 covergroups real. Kept deliberately **outside** the topology banks — different axis, different denominator (§III-B.4–5).
+
+**The frozen defence banks on disk**, so the citation is unambiguous:
+`cov/bank_1CL_1C_4W_4T_DEFENCE_FROZEN_20260903` · `cov/bank_2CL_2C_4W_4T_DEFENCE_FROZEN_20260904` · `cov/bank_2CL_2C_4W_4T_L2L3_20260818` · `cov/isacov_gaphunt/`.
+
+⚠ **Two caveats on the table above, both honest movement rather than regression:**
+1. A later pair of banks including the hazard probe reads **94.66% / 94.50%** — very slightly lower, because a new probe legitimately **adds bins to the denominator**. Quote whichever bank you cite, consistently.
+2. The taps added 2026-09-03…09-06 (7–11 in §3.3) are **not yet merged into a fresh full-suite bank.** They were each verified non-vacuous and non-perturbing individually, but the headline totals here predate them. A full re-run to fold them in is a genuine multi-hour cost and was not launched speculatively.
+
 **Methodological note worth knowing:** QuestaSim's "Total" is the **unweighted mean of 7 categories**, each contributing 1/7 regardless of bin count. Therefore *the lowest category is the biggest lever* — moving Directives (16 bins) from 31% to 100% shifted the total more than moving Toggle (425k bins). This was derived arithmetically and drove prioritization.
 
 ---
 
 # PART VIII — RTL FINDINGS (R1–R10) ⭐⭐ *the "I found real bugs" section*
 
-*48 observations catalogued total (`OBS-001`…`OBS-048`); 10 promoted to paper findings with disposition.*
+*56 observations catalogued total (`OBS-001`…`OBS-057`; 048 unused as an entry); **10 promoted to paper findings** with disposition.* ⟨updated 2026-09-07 — was 48⟩
+
+**The promotion criterion matters and is worth stating if asked:** an observation is promoted when it is (a) a property of the *design*, not of our environment, and (b) reproducible from a cited `file:line` plus a named run. Testbench bugs, methodology traps and observability limits stay in the catalogue — which is why the catalogue is 5.6× the size of the findings table, not because the other 46 are filler.
 
 | ID | Finding | Class | Disposition |
 |---|---|---|---|
@@ -392,7 +555,7 @@ Spanning: instruction classes **per execution unit** (ALU / FPU / LSU / SFU / TC
 | **R6** | One load → multiple commit records, overlapping masks | Quirk | Handled — lockstep Rule 3 |
 | **R7** | uuid encodes flat core id + warp id | Quirk | **Exploited** — lockstep Rule 2 |
 | **R8** | Load data not observable at commit arbiter | Observability | Closed — dedicated LSU probe |
-| **R9** | Write path fire-and-forget (`bready` tied high) | Characteristic | Cited coverage exclusion + robustness recommendation |
+| **R9** | Write path fire-and-forget (`bready` tied high); **and the master has no error-handling path at all** | **Bug (robustness) — upgraded from "Characteristic" 2026-09-06** | **Measured by fault injection: 166/166 assertion firings** (§8.6, OBS-057) |
 | **R10** | **Reset relay registers reset in a flop nothing resets; `reset_o` is X for one cycle** | **Bug (X source)** | **Fixed; still present upstream** |
 
 ## 8.1 ⭐ R10 — an unknown reset for one cycle, found by *restoring a silenced assertion*
@@ -464,7 +627,38 @@ Handling: defense in depth (assertion-aware verdict gate fails any run tripping 
 - **R2:** `VX_config.vh:246` defines `STALL_TIMEOUT = 100000 * (1 ** (L2_ENABLED + L3_ENABLED))`. Intent: scale the watchdog with cache depth. Reality: **1^N ≡ 1**, threshold constant. On deep hierarchies the watchdog can fire spuriously. **One-character fix** (`10 **`). *(Independently fixed upstream — corroboration that it was real.)*
 - **R4:** The core self-starts from reset (`VX_schedule.sv:230`) while base DCRs have no reset value (`VX_dcr_data.sv:27`) — **a core leaving reset before the host finishes DCR programming fetches from an undefined base.** Environment holds reset until a DCR-bootstrap-done handshake; a real integration needs the same discipline or an RTL interlock.
 - **R8:** Load writeback data never reaches the commit arbiter tap — closed by the dedicated LSU probe + Rule 4's soundness filter. Additionally, **the LSU result bus broadcasts the active lane's value across all lane positions per beat** (it is not a per-lane vector), which the comparator must account for.
-- **R9:** The AXI adapter hardwires write-response ready — a **fire-and-forget write path** that forfeits error observability and makes one class of response-stability assertions **structurally untestable** (cited as coverage exclusion + robustness recommendation).
+- **R9:** The AXI adapter hardwires write-response ready — a **fire-and-forget write path** that forfeits error observability and makes one class of response-stability assertions **structurally untestable**. **Now measured rather than inferred — see §8.6.**
+
+## 8.5 ⭐ OBS-055 — WAR hazards are unreachable *by construction*, and that is a result ⟨added 2026-09-07⟩
+
+The new hazard probe (tap 8) shows RAW and WAW populating normally — and **WAR never firing at all**. The tempting move is to log an uncovered bin and chase it with stimulus. Reading `VX_scoreboard.sv` instead proves it can never fire:
+
+- the in-use register bitmap is set **only on a producer's own `rd`**, never on a source read; and
+- per-warp issue is **strictly in-order**.
+
+Therefore a later write can never chase an earlier read. **WAR is structurally unreachable, not merely unobserved.**
+
+> **Why this belongs in a findings section rather than a waiver file:** the honest outcomes for an uncovered bin are *reach it*, *prove it unreachable*, or *leave it red*. Silently waiving it is the failure mode. Here the bin was recorded with its structural reason attached and a `file:line` citation — which is a stronger statement than coverage would have been.
+
+This is the same discipline as **OBS-050** (`fence.i` decodes identically to a data `fence` because `VX_decode.sv:291` never inspects `funct3`, making `INST_FENCE_I` a dead localparam): the zero bin was left deliberately visible *first*, and only then excluded with the citation.
+
+## 8.6 ⭐ OBS-057 — the AXI master has no error-handling path, proven by injection ⟨added 2026-09-07⟩
+
+**This closes a roadmap item that was open in the 2026-08-25 text** (§XI front-end item 2: *"the bus responder always returns `OKAY`; no `SLVERR`/`DECERR` injection exists, so no error-recovery path is exercised"*).
+
+**Method.** A plusarg-gated error mode (`+AXI_INJECT_ERR`, default OFF, same convention as throttle/flood) returns `SLVERR`/`DECERR` on every 7th B and R response.
+
+**The step that made it safe to run, and which is the transferable part:** *before* running, the existing checker was read to confirm it already guarded the injected condition — `axi_monitor.svh` skips its inline compare when `rresp != AXI_OKAY`. Verify-before-run, rather than inject-and-interpret.
+
+**Result, measured not assumed:** `VX_axi_adapter.sv:314` and `:333-334` carry `` `RUNTIME_ASSERT ``s requiring every response to be `OKAY`. They fired **166 times out of 166 injected errors** — an exact match to the injected cadence and to vsim's own native error tally.
+
+> **Vortex's AXI master does not tolerate a legal AXI error response. There is no error-handling path to exercise, because there is none. Any real bus error is an unconditional RTL assertion failure.**
+
+Two consequences:
+1. **R9 is upgraded** from an inferred robustness gap to a measured one. "We didn't test this" became "we tested this, and here is exactly what breaks."
+2. It **closed four SVA `cover` properties that had been written and were waiting** — `cover_bresp_slverr` / `cover_bresp_decerr` / `cover_rresp_slverr` / `cover_rresp_decerr` (`vortex_axi_if.sv:760-772`) had never fired in the project's history.
+
+*Disposition: real RTL limitation, confirmed by actual fault injection. Recommendation upstream is an error-response path (or, minimally, a documented assumption that the interconnect never errors).*
 
 ---
 
@@ -496,7 +690,11 @@ Handling: defense in depth (assertion-aware verdict gate fails any run tripping 
 | **Structural coverage ceilings** | Toggle plateaus low-80s — dominated by a **read-only instruction cache** whose write-data path is elaborated but undrivable (**26% of the whole gap from one subtree**), plus write-through data caching and constant address high bits. True value reported, not gamed. |
 | **No trap architecture** | Exception-path verification is **unimplementable on this DUT** (there are no exceptions). The corresponding generator profiles are excluded as *unimplementable*, **not skipped silently**. |
 | **Stimulus diversity, not volume** | A **ten-seed sweep across nine profiles** produced **90 additional distinct programs** (verified distinct by content hash), **all passing, with no measurable coverage gain** — every category bit-identical except toggle at **+0.06%**. That is a *robustness* result, not a coverage one. The binding constraint is the generator's *reach*: it emits user-mode integer code with M-mode CSR writes removed, so every seed explores the same region. |
-| **Coverage-model provenance** | The functional model is **self-authored rather than traced to a specification document**, so closure measures the model, not the specification. |
+| **Coverage-model provenance** | The **L2** functional model is **self-authored rather than traced to a specification document**, so closure measures the model, not the specification. *(L1 does not share this limitation — riscvISACOV's covergroups are generated from Imperas' ratified-ISA DV plans.)* |
+| **The ISA layer is blind to SIMT** ⟨added 2026-09-07⟩ | riscvISACOV covers the *instruction space*, not the machine — **proven**, not assumed: lane-as-hart (4,581 samples) and lane-0-only (1,677) cover the identical bin set. It can never speak to warps, masks or divergence. That is precisely why L2 exists, and why an L1+L2 blended number would be meaningless. |
+| **The L1 headline excludes 92% of raw bins** ⟨added 2026-09-07⟩ | 83.14% is quoted with `*_reg_assign` excluded as a **stated scope decision** (`EOTH`), separately labelled from structural unreachability (`EUR`) and never merged with it. Both the raw 22.3% and the excluded 83.1% are published. Quote either — never one without naming its denominator. |
+| **Latest taps not yet in a merged bank** ⟨added 2026-09-07⟩ | The five probes and six covergroups added 2026-09-03…09-06 are individually verified non-vacuous and non-perturbing, but the headline 94.7%/94.6% totals **predate them**. A full re-run to fold them in has not been done. |
+| **X-propagation is not available on this toolchain** ⟨added 2026-09-07⟩ | QuestaSim 2021.2_1 here exposes **no `-xprop` flag** (verified against `vsim`/`vopt`/`vlog -help`). Given R10 was an X-source bug, this is a real gap in the flow — but it is a *tooling* limit, not an unstarted task, and should be stated that way. |
 | **Verified build** | Findings stated against the debug build (`PC_BITS = XLEN`) at one RTL pin; the release build changes the *visibility*, not the presence, of R1. |
 | **Provenance disclosure** | The DUT is an open-source RTL model at a pinned revision **with locally modified files**, disclosed explicitly — *"a verification result is a statement about a specific artifact, and 'upstream, unmodified' would not describe what we ran."* |
 
@@ -507,13 +705,17 @@ Handling: defense in depth (assertion-aware verdict gate fails any run tripping 
 **Deliberately separated, because they demand different tooling, different skills, and *different claims*.**
 
 ### Remaining front-end (RTL functional) work
-1. **Stimulus of a different *kind*** — privileged and exception behavior, bus error responses. Not more seeds (proven: +0.06% toggle from 90 programs).
-2. **Error and exception verification** — the bus responder always returns `OKAY`; no `SLVERR`/`DECERR` injection exists, so **no error-recovery path is exercised**.
-3. **Formal property verification** on arbitration-heavy control (cache MSHR, commit arbitration) — where dynamic simulation is weakest and the state space is small enough for proof.
-4. **X-propagation and reset randomization** — uninitialized-state bugs are invisible to a two-state functional flow; several unreset elements are already identified structurally but never exercised under randomized reset. *(R10 is direct evidence this matters.)*
-5. **Configuration-matrix breadth** — three points sampled of a space spanning cluster, core, warp, thread and cache-tier dimensions.
-6. **Coverage-model provenance** — trace the functional model to a specification document.
-7. **Independent SIMT reference** — structural ceiling.
+⟨roadmap re-assessed 2026-09-07 — one item is now **done**, one is **not available on this toolchain**, and saying so is better than listing both as future work⟩
+
+1. **Stimulus of a different *kind*** — privileged and exception behavior. Not more seeds (proven: +0.06% toggle from 90 programs). **Still open.**
+2. ~~**Error and exception verification** — the bus responder always returns `OKAY`; no `SLVERR`/`DECERR` injection exists.~~ ✅ **DONE 2026-09-06.** `+AXI_INJECT_ERR` built and run; the finding is **OBS-057 / §8.6** — there is no error-recovery path in the DUT to exercise, and that *is* the result. The *exception* half remains unimplementable (item 4 below / no trap architecture).
+3. **Formal property verification** on arbitration-heavy control (cache MSHR, commit arbitration) — where dynamic simulation is weakest and the state space is small enough for proof. **Open; no formal tool licensed here.**
+4. **X-propagation and reset randomization** — uninitialized-state bugs are invisible to a two-state functional flow; several unreset elements are identified structurally but never exercised under randomized reset. *(R10 is direct evidence this matters.)* ⚠ **Correction: X-propagation analysis is NOT available on this installation.** QuestaSim 2021.2_1 here exposes **no `-xprop` flag at all** — verified against `vsim`/`vopt`/`vlog -help`, not assumed from documentation. An earlier assessment of this item as "mechanically cheap" was wrong and is retracted. Reset *randomization* remains feasible without it; X-prop needs a different tool or license tier.
+5. **Configuration-matrix breadth** — three topology points sampled of a space spanning cluster, core, warp, thread and cache-tier dimensions. **Open.**
+6. **Coverage-model provenance** — trace the L2 functional model to a specification document. *(L1 already has this property by construction — riscvISACOV's covergroups are generated from Imperas' ratified-ISA DV plans, which is part of why the third-party layer is worth having.)*
+7. **Independent SIMT reference** — structural ceiling, not a task.
+8. **Fold taps 7–11 into a fresh full-suite bank** ⟨new⟩ — the probes added 2026-09-03…09-06 are individually verified but not yet reflected in a merged headline number (§7.4 caveat 2).
+9. **Close the three honestly-red bins** ⟨new⟩ — LMEM `conflict` (needs a bank-hostile kernel), the pure divide corners, and FP `zero`/`inf`/`nan` (need special-value stimulus). All are stimulus work with no structural obstacle.
 
 ### Back-end / ASIC sign-off (entirely out of scope — say so plainly)
 Gate-level simulation (netlist, then back-annotated timing) · static timing analysis across PVT corners · DFT (scan, ATPG, fault coverage, MBIST) · CDC/RDC analysis with metastability modeling · lint and structural sign-off · low-power verification (power intent, retention, isolation) · physical-design closure (floorplan, P&R, extraction, SI/PI) · equivalence checking RTL↔netlist↔post-layout · post-silicon bring-up and characterization.
@@ -544,6 +746,12 @@ Gate-level simulation (netlist, then back-annotated timing) · static timing ana
 **Q: "Walk me through a bug you found end to end."**
 > *(Use R10 — see §8.1. It has: a suppressed assertion, a months-long silent window, a concrete RTL mechanism with code, a real fix, a 51-run regression, re-proven injection guards, and a counterintuitive coverage consequence. It demonstrates every skill they are testing for in one story.)*
 
+**Q: "You excluded 92% of the ISA coverage bins and then quoted 83%. Isn't that just moving the goalposts?"** ⟨added 2026-09-07 — expect this one; it is the sharpest attack on the headline⟩
+> It would be, if I'd hidden it or if the two exclusion classes were mixed. Three things prevent that. **First, both numbers are published** — 22.3% raw, 83.1% with register-index bins out, and the slide states which denominator it is using. **Second, the classes are separate and differently labelled.** `EUR` is a claim that bins are structurally unreachable; `EOTH` is a scope decision that they're out of scope. **Third, the structural class is machine-gated**: if an `EUR` exclusion moves the *hit* count, the script fails the run — because a genuinely-unreachable bin can only change the denominator. It passed at 1,444 hits before and after. On the merits of the scope decision itself: `*_reg_assign` asks which architectural register was allocated. Vortex's register file is a banked RAM with uniform indexing, so `x5` versus `x6` is structurally symmetric — and *which* register gets allocated is a property of the compiler, not the DUT. Leaving those bins in makes the aggregate a measurement of LLVM's register allocator. OpenHW take the same position.
+
+**Q: "What's actually new here? Plenty of people have written a UVM environment."** ⟨added 2026-09-07⟩
+> The environment isn't the contribution — the standards extension is. All three open RISC-V verification standards assume one hart, one instruction, one architectural context. A warp is *N* contexts executing one instruction under a thread mask, so one record per hart structurally cannot carry it. I extended RVVI-TRACE at exactly that documented assumption boundary — warp ID, thread mask, per-lane data — and then attached Imperas' coverage VIP to the extended interface **without forking it**: 80 covergroups generated from their own DV plans, running against a GPU. And I can prove the layers are disjoint rather than assert it: running the VIP as lane-as-hart (4,581 samples) versus lane-0-only (1,677) covers the *identical bin set*, which means the third-party model is structurally blind to the thread mask. That's why our own SIMT model has to exist alongside it, and why the two numbers must never be merged.
+
 **Q: "Have you ever been wrong about a finding?"**
 > Yes, twice, and both are in the papers. I attributed the toggle-coverage gap to the write-through data cache; a positive control proved it was the **read-only instruction cache** — 26% of the whole gap from one subtree. And I once waived AXI route bins on an assumed bound; three of those `ignore_bins` later **fired on real traffic**, which is exactly the failure mode a waiver is supposed to prevent. I withdrew them, rebuilt the coverpoints from RTL parameters, and added a **blocking merge-time gate** that fails any exclusion which changes a covered count — it has since caught two more waiver defects.
 
@@ -571,7 +779,19 @@ Gate-level simulation (netlist, then back-annotated timing) · static timing ana
 | 16 | **Self-correction** | Toggle attribution falsified by positive control; waivers that fired on real traffic → blocking merge gate |
 | 17 | **Limits** | Independence ceiling · soundness boundary · structural toggle ceiling · stimulus diversity ≠ volume |
 | 18 | **Roadmap** | Front-end (raises claim strength) vs. back-end (a different claim entirely). Draw the line explicitly. |
-| 19 | **Artifact** | 21.5k lines / 80 files / 5 agents / 17 covergroups / 48 observations / 2 papers / upstream-shaped packaging |
+| 19 | **Artifact** | 22.5k lines / 88 files / 5 agents / 11 taps / 23 covergroups (+80 third-party) / 56 observations / 2 papers / upstream-shaped packaging |
+
+**⟨2026-09-07 — the narrative above is the *depth-first* ordering, and it now under-sells the headline.⟩** With PART III-B added, the standards contribution should be introduced **before** the lockstep flagship, because it is the more novel claim and it reframes everything after it. Suggested insertions:
+
+| after | new slide | core message |
+|---|---|---|
+| 3 | **⭐⭐ The standards gap** | RVVI / riscvISACOV / ImperasDV all assume one hart, one instruction, one context. **A warp is *N* contexts under a mask.** One record per hart cannot carry it. |
+| ↳ | **⭐⭐ The contribution** | Extend RVVI at its documented assumption boundary → attach the third-party VIP **unforked** → 80 covergroups from Imperas' own DV plans running against a GPU. |
+| 13 | **⭐ Three coverage layers, proven disjoint** | L1 (ISA, third-party) ∩ L2 (SIMT, ours) = ∅ — proven by the 4,581 vs 1,677 identical-bin-set experiment. Never blend them. |
+| ↳ | **The honest denominator** | 83.14% with `*_reg_assign` excluded — and *why* that exclusion is a scope decision, with the EUR/EOTH split machine-gated so the two classes cannot be blurred. |
+| 15 | **OBS-057** | Injected AXI errors → **166/166** assertion firings. The DUT has no error path. "We didn't test this" → "we tested this, here's what breaks." |
+
+**The strongest single slide remains the R10 story (14)**, with OBS-029 (a green run can be vacuous) close behind — both are arguments about *verification maturity*, which outrank any coverage percentage.
 
 ---
 
@@ -593,7 +813,13 @@ Gate-level simulation (netlist, then back-annotated timing) · static timing ana
 | R1 blast radius | **every one of 12 riscv-dv profiles** fired misaligned assertions (30–7,616/run) |
 | Seed sweep | **90 distinct programs, all pass, +0.06% toggle only** |
 | Toggle root cause | icache **22,730 missing bins = 26.4%** of the entire gap, one subtree |
-| Env scale | **80 files, 21,510 lines, 5 agents, 17 covergroups, 48 observations** |
+| **L1 ISA coverage (third-party VIP)** | **429/516 bins = 83.14%**, 89.28% weighted, **78/80 covergroups real** |
+| **L1 raw, before any exclusion** | 1,444/6,469 = 22.32% — `*_reg_assign` is **92% of that denominator** (5,951 bins) |
+| **L1 structural-exclusion gate** | hits **1,444 → 1,444** (unchanged) — machine-verified, run fails otherwise |
+| **L1/L2 disjointness proof** | lane-as-hart (**4,581** samples) vs lane-0-only (**1,677**) → **identical bin set** |
+| **ISA map integrity** | **0 map misses / 0 word mismatches** on every run |
+| **AXI error injection (OBS-057)** | **166/166** `RUNTIME_ASSERT` firings; **4** dormant SVA covers closed |
+| Env scale ⟨re-measured 2026-09-07⟩ | **88 files, 22,562 lines, 5 agents, 11 taps, 23 covergroups (+80 third-party), 56 observations** |
 
 ---
 
@@ -609,4 +835,6 @@ If an interviewer reads the limitations section and asks about independence, you
 
 ---
 
-*Sources: `docs/paper/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…048), `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/COVERAGE_MAX_20260816.md`, and the live environment at `Vortex/sim/uvmsim/` (80 SV/SVH files, 21,510 lines). Repo state: `Vortex-UVM-GP` @ `e7d30ab`, RTL submodule `vortex-uvm-gp-rtl` @ `3bffd16`.*
+*Sources: `docs/paper/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…057), `docs/VERIFICATION_PLAN_v2.md` (53 feature areas, three-layer model, waivers), `docs/RISCVISACOV_STATUS.md` (L1 integration, coverpoint taxonomy), `docs/PPT_HANDOVER_WHOLE_PROJECT_20260906.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/COVERAGE_MAX_20260816.md`, and the live environment at `Vortex/sim/uvmsim/`.*
+
+*Revision 2026-09-07: all counts re-derived from the working tree (**88 SV/SVH files, 22,562 lines**; 23 covergroups; 11 taps; 56 observations) rather than carried forward from the 2026-08-25 text. Coverage banks cited by directory name in §7.4. Original repo state at first compilation: `Vortex-UVM-GP` @ `e7d30ab`, RTL submodule `vortex-uvm-gp-rtl` @ `3bffd16`; current work is on outer branch `feat/riscvisacov-coverage`, submodule branch `fft-poc`.*
