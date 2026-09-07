@@ -284,6 +284,49 @@ Worth being concrete, because "we added a third-party VIP" invites *"and did it 
 
 ---
 
+# PART III-C — AN ORIGINAL SIMT-AWARE STIMULUS GENERATOR (`simtgen`) ⭐ *added 2026-09-07*
+
+## III-C.1 The gap that riscv-dv and Spike cannot close
+
+The ten-seed sweep (§ Part X, "Stimulus diversity, not volume") already proved *volume* was not the binding constraint: 90 additional distinct riscv-dv programs bought +0.06% toggle and nothing else. The reason is structural, not a tuning problem — **riscv-dv and Spike have no concept of a warp, a thread mask, or a reconvergence stack**, so neither can *intentionally* provoke a divergent branch, a bank-contending memory access, or a coalescable-vs-scattered pattern. They generate scalar programs; a SIMT hazard can only appear in one by accident.
+
+## III-C.2 A negative result, reached honestly, before building anything
+
+An external academic SIMT fuzzer (FuzzGPU, USENIX Security 2026) was evaluated for reuse of its *generator* specifically (never its checking stack, which duplicates work this project already does differently). Its generator turned out to be **execute-in-the-loop coupled to a vendored ISA-emulator instance**, built by one CMake target that also pulls in Verilator/ramulator/softfloat, with no generator-only build path. Extraction cost was judged to exceed reimplementation cost. Full citation-backed writeup: `docs/GENERATOR_SCOPING_DECISION.md`. **Only the published axis taxonomy (divergence / memory-access-pattern / barrier-sync) was reused, as a category label — no code, no algorithm.**
+
+## III-C.3 Design principle and the six enforced constraints
+
+`simtgen` randomizes at the *program* layer only — the existing SimX lockstep and end-state scoreboard do all correctness checking, unchanged. The generator's only job is to produce *interesting* programs; it carries no self-check of its own. Every generated program enforces:
+
+1. **Race-free by construction** — each thread/warp writes only its own memory slice (Vortex is weakly coherent, flush-only).
+2. **Divergent control flow is real C `if`/`else`**, never hand-written assembly.
+3. **Grid size is device-derived at runtime** (`vx_num_cores()*vx_num_warps()*vx_num_threads()`), never hardcoded to one topology.
+4. **No self-check** — SimX is the reference.
+5. **Bounded live values** (≤ 8–16) — measured register-spill / spawn-join deadlock risk above that.
+6. **Seeded, deterministic** — one `random.Random(seed)` instance threaded through everything; verified by generating the same seed twice and diffing.
+
+## III-C.4 A compiler defeated the first version, and how that was caught
+
+The first divergence-axis generator produced nested `if` trees intended to walk the IPDOM reconvergence stack to its full depth. It silently failed: **LLVM folded the pure-arithmetic divergent body into a lookup table**, collapsing the intended structure to two real `vx_split_n` sites instead of four — caught by reading the compiled disassembly, not by trusting a functional pass. Fixed with a one-line change: the shared accumulator became `volatile int r`, forcing real memory ordering and restoring genuine nested split/join structure.
+
+## III-C.5 A second, independent stimulus/compiler path — POCL
+
+`simtgen` is complemented by validating a wholly separate code-generation path: **POCL** compiles real OpenCL-C kernels through a Vortex-targeted `llvm-vortex` toolchain onto the same DUT. Built and run end-to-end this session (`tests/opencl/saxpy`, via `sim/simx`): **PASSED, instrs=41601, cycles=41711, IPC=0.997363** — independently re-run with identical numbers. Two real environment gaps were found and fixed to get there (missing `LD_LIBRARY_PATH` entries; `Vortex/runtime/simx/libvortex-simx.so` had never been built in this environment). This proves the flow isn't exercised through only one code-generation path — a claim `simtgen` alone cannot make.
+
+## III-C.6 Results — bins closed that the industry stack left at 0%
+
+| Covergroup bin | Before `simtgen` | After |
+|---|---|---|
+| `warp_divergence_cg.cp_split_depth` (4 depths) | 3/4 — `d[3]` never hit across 50 riscv-dv-style seeds | **4/4 = 100%** |
+| `lmem_bank_cg.cp_bank_conflict` | 0/3 — probe itself was miscoded (§7.5, OBS-060) | **3/3 = 100%** |
+| `coalesce_cg.cp_coalesce_kind` | partial | **3/3 = 100%** |
+
+⚠ **These closures are verified in isolated merge directories** (`cov/simtgen_*_20260907/`), the same discipline as the ISA layer (§III-B.5) — **not yet folded into the frozen topology banks in §7.4.** A full-suite re-run to fold them in is a genuine multi-hour cost, tracked as roadmap item 9, not launched speculatively.
+
+An early development iteration of the memory-axis generator had a real bug (`base=wid*nt` instead of `base=wid*nt*nt`), which produced genuine cross-warp address collisions — caught as **6/6 real scoreboard MEM MISMATCH failures** before the fix, which is itself evidence the bidirectional scoreboard was watching.
+
+---
+
 # PART IV — FLAGSHIP: PER-INSTRUCTION LOCKSTEP FOR SIMT ⭐⭐ *the technical centerpiece*
 
 ## 4.1 Architecture
@@ -504,7 +547,9 @@ Measured inventory: `alu_class_cg`, `axi_transaction_cg`, `barrier_cg`, `beat_cg
 - **`hazard_cg` → OBS-055**: RAW and WAW populate; **WAR never can** (§8.5).
 - **`beat_cg`**: 4/4 bins real on the first run (`vecadd_lite`: single=1609, first=68, middle=136, last covered) — on a probe that had carried **zero covergroups** before.
 
-**Honest open bins, deliberately left red rather than waived:** `lmem_bank_cg`'s `conflict` bin (the stressing kernel's access pattern is bank-friendly *by construction*; closing it needs a bank-hostile kernel), the "pure" `by_zero`/`overflow` divide corners (per-lane operand rotation means lanes rarely hit the identical corner simultaneously), and `cp_fp_class`'s `zero`/`inf`/`nan` (need dedicated special-value stimulus). Notably `cp_fp_class`'s **`denorm` bin went real organically** — a genuine denormal arose in `fpu_test` and was classified correctly by the IEEE-754 field decode.
+**Honest open bins, deliberately left red rather than waived:** the "pure" `by_zero`/`overflow` divide corners (per-lane operand rotation means lanes rarely hit the identical corner simultaneously), and `cp_fp_class`'s `zero`/`inf`/`nan` (need dedicated special-value stimulus). Notably `cp_fp_class`'s **`denorm` bin went real organically** — a genuine denormal arose in `fpu_test` and was classified correctly by the IEEE-754 field decode.
+
+`lmem_bank_cg`'s `conflict` bin — previously in this same "honestly red" list, attributed to a bank-friendly stimulus pattern — **is now closed, and the original attribution was wrong. See §7.5.**
 
 ## 7.4 Results — three independent banks, never blended
 
@@ -537,11 +582,21 @@ Measured inventory: `alu_class_cg`, `axi_transaction_cg`, `barrier_cg`, `beat_cg
 
 **Methodological note worth knowing:** QuestaSim's "Total" is the **unweighted mean of 7 categories**, each contributing 1/7 regardless of bin count. Therefore *the lowest category is the biggest lever* — moving Directives (16 bins) from 31% to 100% shifted the total more than moving Toggle (425k bins). This was derived arithmetically and drove prioritization.
 
+## 7.5 ⭐ A second self-correction: the probe was wrong, not the design (OBS-060) ⟨added 2026-09-07⟩
+
+`lmem_bank_cg.cp_bank_conflict`'s `conflict` bin had read **zero for the project's entire history**, and the standing explanation (§7.3, prior text) was a stimulus gap: "the stressing kernel's access pattern is bank-friendly by construction." **That explanation was never verified against the RTL, and it was wrong.**
+
+The probe (`vx_lmem_probe.sv`) classified a lane as making a bank request only when `req_valid && req_ready` — but `VX_stream_xbar`'s port structure (`output wire [NUM_OUTPUTS-1:0] valid_out`, one valid bit per bank) makes **at most one lane per bank acceptable per cycle by construction**. Gating the *classification itself* on acceptance meant a genuinely-contending second lane, denied in the same cycle, was never counted as having attempted anything — the bin was **structurally unreachable as coded**, independent of any stimulus.
+
+**Fix:** reclassify on `req_valid` alone. Re-run against a deliberately bank-hostile `simtgen` memory-axis kernel (§III-C.6): `idle=70460, no_conflict=61, conflict=169` — a bin that had never fired once now fires 169 times against the same class of stimulus that, under the old classification, would still have read zero.
+
+> **The same lesson as §7.2, one layer deeper.** There, a coverage *attribution* was wrong (which subsystem). Here, a coverage *measurement instrument* was wrong (the probe itself was blind to the event it claimed to sample) — and the fix was in the testbench, not the RTL, not the stimulus. A 0%-hit bin is not self-evidently a stimulus gap; it can be the thing doing the counting.
+
 ---
 
 # PART VIII — RTL FINDINGS (R1–R10) ⭐⭐ *the "I found real bugs" section*
 
-*56 observations catalogued total (`OBS-001`…`OBS-057`; 048 unused as an entry); **10 promoted to paper findings** with disposition.* ⟨updated 2026-09-07 — was 48⟩
+*60 observations catalogued total (`OBS-001`…`OBS-061`; 048 unused as an entry); **10 promoted to paper findings** with disposition.* ⟨updated 2026-09-07 — was 56⟩
 
 **The promotion criterion matters and is worth stating if asked:** an observation is promoted when it is (a) a property of the *design*, not of our environment, and (b) reproducible from a cited `file:line` plus a named run. Testbench bugs, methodology traps and observability limits stay in the catalogue — which is why the catalogue is 5.6× the size of the findings table, not because the other 46 are filler.
 
@@ -608,6 +663,8 @@ The RISC-V specification requires JALR to clear the LSB of the computed target. 
 **Build-dependent visibility, which is the subtle part:** in the release build (`PC_BITS = XLEN−2`) a `+1` target is masked away *by representation* — **spec-correct by accident** — while a `+2` target would silently word-align where the spec demands a trap.
 
 **Fix:** a one-line `& ~1` at the destination adder. **Because the reference model deliberately mirrors the no-clear behavior, the fix must un-mirror both models together** — a coordination detail that is easy to get wrong.
+
+**Independently corroborated externally** ⟨OBS-058, 2026-09-07⟩: an unrelated academic fuzzing study of Vortex (FuzzGPU, USENIX Security 2026) reports the identical defect. Their `sra`-related second finding was checked against this project's pinned RTL and **not reproduced** — the shift-immediate field is signed at this commit, so the shift is genuinely arithmetic; logged as unresolved pending their PR text, not asserted either way.
 
 ## 8.3 R3 — misaligned access: silent corruption, simulation-only detection
 
@@ -695,6 +752,7 @@ Two consequences:
 | **The L1 headline excludes 92% of raw bins** ⟨added 2026-09-07⟩ | 83.14% is quoted with `*_reg_assign` excluded as a **stated scope decision** (`EOTH`), separately labelled from structural unreachability (`EUR`) and never merged with it. Both the raw 22.3% and the excluded 83.1% are published. Quote either — never one without naming its denominator. |
 | **Latest taps not yet in a merged bank** ⟨added 2026-09-07⟩ | The five probes and six covergroups added 2026-09-03…09-06 are individually verified non-vacuous and non-perturbing, but the headline 94.7%/94.6% totals **predate them**. A full re-run to fold them in has not been done. |
 | **X-propagation is not available on this toolchain** ⟨added 2026-09-07⟩ | QuestaSim 2021.2_1 here exposes **no `-xprop` flag** (verified against `vsim`/`vopt`/`vlog -help`). Given R10 was an X-source bug, this is a real gap in the flow — but it is a *tooling* limit, not an unstarted task, and should be stated that way. |
+| **A configuration assumption was found false, and the fix isn't scoped yet** ⟨OBS-061, added 2026-09-07⟩ | The primary "RV32IMF" config was assumed FLEN=32 (no D-extension). **Confirmed dynamically, not just by reading source** — an isolated one-module elaboration probe, compiled into its own throwaway Questa library, reports `FLEN=64 EXT_D_ENABLED=1` (a `+define+EXT_D_ENABLE=1` in the RTL flist is listed ahead of, and overrides, the config file's own guard). Four follow-ups are explicitly **open, not resolved**: architectural reachability beyond the FPU register file; whether the frozen coverage banks in §7.4 are diluted by unstimulated D-extension logic; whether SimX's F-only model is still sound against a D-capable register file; and whether this is an intentional forward-looking choice or a real defect. |
 | **Verified build** | Findings stated against the debug build (`PC_BITS = XLEN`) at one RTL pin; the release build changes the *visibility*, not the presence, of R1. |
 | **Provenance disclosure** | The DUT is an open-source RTL model at a pinned revision **with locally modified files**, disclosed explicitly — *"a verification result is a statement about a specific artifact, and 'upstream, unmodified' would not describe what we ran."* |
 
@@ -715,7 +773,9 @@ Two consequences:
 6. **Coverage-model provenance** — trace the L2 functional model to a specification document. *(L1 already has this property by construction — riscvISACOV's covergroups are generated from Imperas' ratified-ISA DV plans, which is part of why the third-party layer is worth having.)*
 7. **Independent SIMT reference** — structural ceiling, not a task.
 8. **Fold taps 7–11 into a fresh full-suite bank** ⟨new⟩ — the probes added 2026-09-03…09-06 are individually verified but not yet reflected in a merged headline number (§7.4 caveat 2).
-9. **Close the three honestly-red bins** ⟨new⟩ — LMEM `conflict` (needs a bank-hostile kernel), the pure divide corners, and FP `zero`/`inf`/`nan` (need special-value stimulus). All are stimulus work with no structural obstacle.
+9. **Close the honestly-red bins** ⟨updated 2026-09-07⟩ — ~~LMEM `conflict`~~ **done** (`simtgen` bank-hostile stride + the OBS-060 probe fix, §III-C.6/§7.5; isolated merge only, not yet in the frozen banks). Remaining: the pure divide corners, and FP `zero`/`inf`/`nan` (need special-value stimulus). Both are stimulus work with no structural obstacle.
+10. **Fold `simtgen`'s closures into a fresh full-suite bank** ⟨new⟩ — same caveat as item 8: individually verified, not yet merged into the §7.4 headline totals.
+11. **Scope OBS-061 (FLEN=64/D-extension elaborated)** ⟨new⟩ — the four follow-up questions in Part X are open, not resolved.
 
 ### Back-end / ASIC sign-off (entirely out of scope — say so plainly)
 Gate-level simulation (netlist, then back-annotated timing) · static timing analysis across PVT corners · DFT (scan, ATPG, fault coverage, MBIST) · CDC/RDC analysis with metastability modeling · lint and structural sign-off · low-power verification (power intent, retention, isolation) · physical-design closure (floorplan, P&R, extraction, SI/PI) · equivalence checking RTL↔netlist↔post-layout · post-silicon bring-up and characterization.
@@ -790,6 +850,7 @@ Gate-level simulation (netlist, then back-annotated timing) · static timing ana
 | 13 | **⭐ Three coverage layers, proven disjoint** | L1 (ISA, third-party) ∩ L2 (SIMT, ours) = ∅ — proven by the 4,581 vs 1,677 identical-bin-set experiment. Never blend them. |
 | ↳ | **The honest denominator** | 83.14% with `*_reg_assign` excluded — and *why* that exclusion is a scope decision, with the EUR/EOTH split machine-gated so the two classes cannot be blurred. |
 | 15 | **OBS-057** | Injected AXI errors → **166/166** assertion firings. The DUT has no error path. "We didn't test this" → "we tested this, here's what breaks." |
+| 19 | **⭐ `simtgen`** ⟨added 2026-09-07⟩ | riscv-dv/Spike have no warp/mask concept, so a 10-seed sweep bought +0.06% toggle. An original from-scratch generator (after ruling out reusing an external fuzzer's inseparable generator) closes the divergence-depth and bank-conflict bins that seed volume alone never could. |
 
 **The strongest single slide remains the R10 story (14)**, with OBS-029 (a green run can be vacuous) close behind — both are arguments about *verification maturity*, which outrank any coverage percentage.
 
@@ -819,7 +880,11 @@ Gate-level simulation (netlist, then back-annotated timing) · static timing ana
 | **L1/L2 disjointness proof** | lane-as-hart (**4,581** samples) vs lane-0-only (**1,677**) → **identical bin set** |
 | **ISA map integrity** | **0 map misses / 0 word mismatches** on every run |
 | **AXI error injection (OBS-057)** | **166/166** `RUNTIME_ASSERT` firings; **4** dormant SVA covers closed |
-| Env scale ⟨re-measured 2026-09-07⟩ | **88 files, 22,562 lines, 5 agents, 11 taps, 23 covergroups (+80 third-party), 56 observations** |
+| **`simtgen` closures (isolated merge, not yet banked)** ⟨new⟩ | `cp_split_depth` 3/4→**4/4**; `cp_bank_conflict` 0/3→**3/3**; `cp_coalesce_kind`→**3/3** |
+| **`lmem_bank_cg.conflict` fix (OBS-060)** ⟨new⟩ | was permanently 0; now `idle=70460, no_conflict=61, conflict=169` |
+| **POCL/OpenCL second stimulus path** ⟨new⟩ | `saxpy` PASSED — instrs=41601, cycles=41711, IPC=0.997363 (independently re-run, identical) |
+| **OBS-061 — config assumption found false** ⟨new⟩ | primary config confirmed **FLEN=64, MISA D-bit=1** (dynamic isolated-elaboration proof), not the assumed FLEN=32 — 4 scoping questions open |
+| Env scale ⟨re-measured 2026-09-07⟩ | **88 files, 22,562 lines, 5 agents, 11 taps, 23 covergroups (+80 third-party), 60 observations** |
 
 ---
 
@@ -835,6 +900,8 @@ If an interviewer reads the limitations section and asks about independence, you
 
 ---
 
-*Sources: `docs/paper/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…057), `docs/VERIFICATION_PLAN_v2.md` (53 feature areas, three-layer model, waivers), `docs/RISCVISACOV_STATUS.md` (L1 integration, coverpoint taxonomy), `docs/PPT_HANDOVER_WHOLE_PROJECT_20260906.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/COVERAGE_MAX_20260816.md`, and the live environment at `Vortex/sim/uvmsim/`.*
+*Sources: `docs/paper/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…061), `docs/VERIFICATION_PLAN_v2.md` (53 feature areas, three-layer model, waivers), `docs/RISCVISACOV_STATUS.md` (L1 integration, coverpoint taxonomy), `docs/GENERATOR_SCOPING_DECISION.md` (why FuzzGPU's generator was not reused, and what `simtgen` took instead), `docs/PPT_HANDOVER_WHOLE_PROJECT_20260906.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/COVERAGE_MAX_20260816.md`, `Vortex/sim/uvmsim/scripts/simtgen/`, and the live environment at `Vortex/sim/uvmsim/`.*
 
 *Revision 2026-09-07: all counts re-derived from the working tree (**88 SV/SVH files, 22,562 lines**; 23 covergroups; 11 taps; 56 observations) rather than carried forward from the 2026-08-25 text. Coverage banks cited by directory name in §7.4. Original repo state at first compilation: `Vortex-UVM-GP` @ `e7d30ab`, RTL submodule `vortex-uvm-gp-rtl` @ `3bffd16`; current work is on outer branch `feat/riscvisacov-coverage`, submodule branch `fft-poc`.*
+
+*Revision 2026-09-07 (second pass, same day): added Part III-C (`simtgen`, an original SIMT-aware stimulus generator, both axes) and its POCL/OpenCL companion validation; added §7.5 (OBS-060, the `lmem_bank_cg.conflict` probe defect and its fix); added OBS-061 (FLEN=64/D-extension found elaborated at the primary config, confirmed dynamically — open scoping item) to Part X; added the OBS-058 external-corroboration note to §8.2; observation count updated 56→60 (`OBS-001…061`).*
