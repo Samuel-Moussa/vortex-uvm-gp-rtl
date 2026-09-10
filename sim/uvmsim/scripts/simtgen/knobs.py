@@ -37,14 +37,14 @@ AXES: Dict[str, dict] = {
         "entry": "generate",
     },
     "barrier": {
-        "weight": 0.0,
-        "implemented": False,
+        "weight": 1.0,
+        "implemented": True,
         "module": "gen_barrier",
         "entry": "generate",
     },
     "vote_shfl": {
-        "weight": 0.0,
-        "implemented": False,
+        "weight": 1.0,
+        "implemented": True,
         "module": "gen_vote_shfl",
         "entry": "generate",
     },
@@ -110,3 +110,70 @@ class DivergenceKnobs:
 
 
 DEFAULT_DIVERGENCE_KNOBS = DivergenceKnobs()
+
+
+@dataclass(frozen=True)
+class BarrierKnobs:
+    """Parameters for gen_barrier.py (S3, W4).
+
+    Deadlock-safe by construction, matching the proven `bar_masks` kernel
+    (Vortex/tests/kernel/bar_masks/main.cpp): exactly ONE warp is spawned
+    (grid == threads-per-warp) and every `vx_barrier` call uses num_warps==1,
+    so a barrier is always satisfied by this warp's own arrival. Neither
+    max_nt nor the num_warps invariant is varied per seed -- only the peel
+    depth, thresholds, barrier ids and per-level literals are (see
+    gen_barrier.py's module docstring for why num_warps must stay fixed).
+
+    max_nt: static buffer bound for in_buf/out_buf, mirrors bar_masks'
+      MAXNT=32 (a generous upper bound on any THREADS-per-warp this project
+      builds with; the emitted main() clamps to the real vx_num_threads()
+      at runtime regardless, same convention as every other kernel here).
+    min_peel_depth/max_peel_depth: how many nested `if (tid < threshold)`
+      barrier levels to emit, in addition to the always-present uniform
+      (all-active) barrier at the top. Kept well under max_nt-1 so
+      rng.sample() (sampling without replacement, no repeated thresholds)
+      never needs more distinct values than [1, max_nt-1] offers.
+    """
+    max_nt: int = 32
+    min_peel_depth: int = 1
+    max_peel_depth: int = 3
+
+
+DEFAULT_BARRIER_KNOBS = BarrierKnobs()
+
+
+@dataclass(frozen=True)
+class VoteShflKnobs:
+    """Parameters for gen_vote_shfl.py (S4, W4).
+
+    All 8 VOTE/SHFL ops (vx_vote_all/any/uni/ballot, vx_shfl_up/down/bfly/idx)
+    are called in every generated program -- op-coverage (cp_vote_shfl_op)
+    does not depend on active-mask state (no cross exists gating it on
+    cp_active_threads, confirmed by reading tb/vx_instr_probe.sv before
+    writing this generator), so per-seed variety comes from the PREDICATE
+    shapes fed to the vote ops and the shift amount (bval) fed to the shuffle
+    ops, plus which lanes are peeled out before the calls execute (so VOTE
+    genuinely sees varying active-thread-count contexts across seeds, per
+    the axis's original "under divergent masks" intent, even though the
+    coverpoint itself does not require it).
+
+    mask is deliberately NEVER varied (fixed at 0, "single subgroup spanning
+    the whole warp" -- the exact, already-validated convention the existing
+    `vote_shfl` kernel uses, Vortex/tests/kernel/vote_shfl/main.cpp:52).
+    Varying it changes shuffle sub-group partitioning in a way this project
+    has not independently verified is safe/meaningful; scoped out rather
+    than guessed, same discipline as every other waiver/scope decision in
+    this codebase.
+
+    max_bval: shuffle shift amount is drawn from [0, max_bval] at Python
+      generation time, but NUM_THREADS (and therefore the RTL-meaningful
+      clamp = NUM_THREADS-1) is only known at kernel COMPILE time
+      (VX_config.h) -- so the emitted C code itself does `bval % NUM_THREADS`
+      before every shuffle call, exactly like the existing `vote_shfl`
+      kernel's `clamp = NUM_THREADS - 1` pattern, rather than trusting this
+      Python-side bound alone to stay in range for every build.
+    """
+    max_bval: int = 31
+
+
+DEFAULT_VOTE_SHFL_KNOBS = VoteShflKnobs()

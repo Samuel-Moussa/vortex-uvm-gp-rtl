@@ -32,8 +32,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gen_divergence  # noqa: E402
 import gen_memory  # noqa: E402
+import gen_barrier  # noqa: E402
+import gen_vote_shfl  # noqa: E402
 from knobs import DEFAULT_DIVERGENCE_KNOBS  # noqa: E402
 from gen_memory import DEFAULT_MEMORY_KNOBS  # noqa: E402
+from gen_barrier import DEFAULT_BARRIER_KNOBS  # noqa: E402
+from gen_vote_shfl import DEFAULT_VOTE_SHFL_KNOBS  # noqa: E402
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -57,8 +61,10 @@ def main() -> int:
                      "Vortex/tests/kernel/simtgen_s001")
     ap.add_argument("--name", default=None, help="PROJECT name; defaults to "
                      "basename(--out)")
-    ap.add_argument("--axis", default="divergence", choices=["divergence", "memory"],
-                     help="'divergence' (S1) or 'memory' (S2)")
+    ap.add_argument("--axis", default="divergence",
+                     choices=["divergence", "memory", "barrier", "vote_shfl"],
+                     help="'divergence' (S1), 'memory' (S2), 'barrier' (S3, W4) "
+                          "or 'vote_shfl' (S4, W4)")
     args = ap.parse_args()
 
     name = args.name or os.path.basename(os.path.normpath(args.out))
@@ -72,6 +78,12 @@ def main() -> int:
     elif args.axis == "memory":
         src = gen_memory.generate(rng, name=name, seed=args.seed,
                                    knobs=DEFAULT_MEMORY_KNOBS)
+    elif args.axis == "barrier":
+        src = gen_barrier.generate(rng, name=name, seed=args.seed,
+                                    knobs=DEFAULT_BARRIER_KNOBS)
+    elif args.axis == "vote_shfl":
+        src = gen_vote_shfl.generate(rng, name=name, seed=args.seed,
+                                      knobs=DEFAULT_VOTE_SHFL_KNOBS)
     else:
         raise NotImplementedError(f"axis {args.axis!r} not implemented")
 
