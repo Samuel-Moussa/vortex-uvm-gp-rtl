@@ -1,6 +1,6 @@
 # Vortex UVM — Technical Dossier
 ### Complete project evaluation, deep technical detail, and measured results
-*Originally compiled 2026-08-25; **revised 2026-09-07** against primary sources: `docs/paper/vortex_uvm_paper.tex`, `docs/RTL_OBSERVATIONS.md`, `docs/VERIFICATION_PLAN_v2.md`, `docs/RISCVISACOV_STATUS.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, and the live environment at `Vortex/sim/uvmsim/`. Every figure below is a measured, banked result — nothing projected.*
+*Originally compiled 2026-08-25; **revised 2026-09-07** against primary sources: `docs/paper/archive/vortex_uvm_paper.tex`, `docs/RTL_OBSERVATIONS.md`, `docs/VERIFICATION_PLAN_v2.md`, `docs/riscvisacov/RISCVISACOV_STATUS.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, and the live environment at `Vortex/sim/uvmsim/`. Every figure below is a measured, banked result — nothing projected.*
 
 ---
 
@@ -280,7 +280,7 @@ Worth being concrete, because "we added a third-party VIP" invites *"and did it 
 
 - **`cp_asm_count`** — a real granularity gain: per-mnemonic instruction identity, which our unit-class model deliberately abstracts away.
 - **`cp_*_sign`, `cp_imm_value`** — operand-value coverage, where **we had nothing at all**. This directly motivated adding the equivalent to *our* L2 model (operand sign, divide corners, IEEE-754 class on taps 1–2), so the layers now inform each other rather than merely coexisting.
-- **Four silent failures were hit during integration, none of which announced itself** — the disassembly-text keying above being the most costly. Each is catalogued in `docs/RISCVISACOV_STATUS.md §8`.
+- **Four silent failures were hit during integration, none of which announced itself** — the disassembly-text keying above being the most costly. Each is catalogued in `docs/riscvisacov/RISCVISACOV_STATUS.md §8`.
 
 ---
 
@@ -538,7 +538,7 @@ The counter-check that confirmed it: `rsp_data.data` toggles 45–46× on all 51
 
 ## 7.3 Functional model — 23 covergroups ⟨updated 2026-09-07, was 17⟩
 
-Spanning: instruction classes **per execution unit** (ALU / FPU / LSU / SFU / TCU, **operation-decoded**, not class-level); SIMT divergence crossed with **IPDOM reconvergence depth**; warp/thread-mask crosses; barrier / `wspawn` / `tmc` behavior; a **stall taxonomy crossed with IPC buckets**; AXI fields; DCR and host launch spaces; system state. **Each with a written sufficiency rationale** (`docs/Coverage_Model_Reference.md`).
+Spanning: instruction classes **per execution unit** (ALU / FPU / LSU / SFU / TCU, **operation-decoded**, not class-level); SIMT divergence crossed with **IPDOM reconvergence depth**; warp/thread-mask crosses; barrier / `wspawn` / `tmc` behavior; a **stall taxonomy crossed with IPC buckets**; AXI fields; DCR and host launch spaces; system state. **Each with a written sufficiency rationale** (`docs/coverage/Coverage_Model_Reference.md`).
 
 Measured inventory: `alu_class_cg`, `axi_transaction_cg`, `barrier_cg`, `beat_cg`, `cache_event_cg`, `coalesce_cg`, `dcr_config_cg`, `dcr_write_cg`, `divergence_cg`, `fpu_class_cg`, `hazard_cg`, `host_operation_cg`, `lmem_bank_cg`, `lsu_class_cg`, `mem_operation_cg`, `reconverge_cg`, `sched_state_cg`, `sfu_class_cg`, `status_performance_cg`, `system_cg`, `tcu_class_cg`, `tmc_cg`, `wspawn_cg`.
 
@@ -900,7 +900,7 @@ If an interviewer reads the limitations section and asks about independence, you
 
 ---
 
-*Sources: `docs/paper/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…061), `docs/VERIFICATION_PLAN_v2.md` (53 feature areas, three-layer model, waivers), `docs/RISCVISACOV_STATUS.md` (L1 integration, coverpoint taxonomy), `docs/GENERATOR_SCOPING_DECISION.md` (why FuzzGPU's generator was not reused, and what `simtgen` took instead), `docs/PPT_HANDOVER_WHOLE_PROJECT_20260906.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/COVERAGE_MAX_20260816.md`, `Vortex/sim/uvmsim/scripts/simtgen/`, and the live environment at `Vortex/sim/uvmsim/`.*
+*Sources: `docs/paper/archive/vortex_uvm_paper.tex` (§§ env, verdicts, lockstep, loadfeed, coverage, provenance, rtlfindings, limits, enhance, tapeout), `docs/RTL_OBSERVATIONS.md` (OBS-001…061), `docs/VERIFICATION_PLAN_v2.md` (53 feature areas, three-layer model, waivers), `docs/riscvisacov/RISCVISACOV_STATUS.md` (L1 integration, coverpoint taxonomy), `docs/GENERATOR_SCOPING_DECISION.md` (why FuzzGPU's generator was not reused, and what `simtgen` took instead), `docs/handoffs/PPT_HANDOVER_WHOLE_PROJECT_20260906.md`, `docs/INDUSTRIAL_TRANSFORMATION_PLAN.md`, `docs/A6_SPIKE_INDEPENDENCE_AUDIT.md`, `docs/coverage/COVERAGE_MAX_20260816.md`, `Vortex/sim/uvmsim/scripts/simtgen/`, and the live environment at `Vortex/sim/uvmsim/`.*
 
 *Revision 2026-09-07: all counts re-derived from the working tree (**88 SV/SVH files, 22,562 lines**; 23 covergroups; 11 taps; 56 observations) rather than carried forward from the 2026-08-25 text. Coverage banks cited by directory name in §7.4. Original repo state at first compilation: `Vortex-UVM-GP` @ `e7d30ab`, RTL submodule `vortex-uvm-gp-rtl` @ `3bffd16`; current work is on outer branch `feat/riscvisacov-coverage`, submodule branch `fft-poc`.*
 
