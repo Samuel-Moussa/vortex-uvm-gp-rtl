@@ -37,6 +37,14 @@ CFG="CLUSTERS=$CLUSTERS CORES=$CORES WARPS=$WARPS THREADS=$THREADS L2=$L2 L3=$L3
 RESULTS_ROOT="${VORTEX_UVM_RESULTS_DIR:-${ENV_ROOT}/results}"
 LOGDIR="${RESULTS_ROOT}/run_suite_logs"; rm -rf "$LOGDIR"; mkdir -p "$LOGDIR"
 RUNS=()
+# W0 (JSA_MACHINE_WORK_PACKAGE.md) / roadmap P0.0: prepare.sh already computes each
+# riscv-dv program's md5 and WARNS on a cross-profile collision (FW-1b history:
+# riscv_pmp_test === riscv_non_compressed_instr_test), but only into a persistent
+# cross-session manifest, never fatal — so a suite run could still silently double-count
+# a duplicate. This makes it fatal WITHIN one suite invocation: track every riscv-dv
+# program's md5 as it's staged here, and abort the suite the moment two DIFFERENT
+# profile names in this run produced byte-identical programs.
+declare -A SUITE_RV_MD5_OWNER=()
 echo "### run_suite.sh @ ${CLUSTERS}CL/${CORES}C/${WARPS}W/${THREADS}T L2=${L2} L3=${L3}"
 
 relrun() { local p; p=$(readlink -f ${RESULTS_ROOT}/latest); echo "$(basename "$(dirname "$p")")/$(basename "$p")"; }
@@ -99,7 +107,28 @@ clear_stale_dv_lock(){
 # (2 near 0.7M, 4 near 1.8-2.2M), so the budget MUST be sized from the max, never
 # from a typical case. 3x the measured max, rounded up.
 RV_TIMEOUT="${RV_TIMEOUT:-6700000}"
-runrv(){ echo "=== sim-only riscv-dv $1 ==="; clear_stale_dv_lock; make sim-only TEST=random_instruction_stress_test PROGRAM="$1" RISCV_DV_REGEN=1 $CFG TIMEOUT=$RV_TIMEOUT >"$LOGDIR/rv_$1.log" 2>&1; stage $?; }
+runrv(){
+  echo "=== sim-only riscv-dv $1 ==="; clear_stale_dv_lock
+  make sim-only TEST=random_instruction_stress_test PROGRAM="$1" RISCV_DV_REGEN=1 $CFG TIMEOUT=$RV_TIMEOUT >"$LOGDIR/rv_$1.log" 2>&1
+  local rc=$?
+  stage "$rc"
+  # W0 duplicate guard: only meaningful for a run that actually produced a program+UCDB.
+  if [ "$rc" -eq 0 ] && [ -f "${RESULTS_ROOT}/latest/reports/coverage.ucdb" ]; then
+    local seedinfo="${RESULTS_ROOT}/latest/riscv_dv_seed.txt"
+    if [ -f "$seedinfo" ]; then
+      local md5; md5=$(grep -m1 "^program_md5" "$seedinfo" | awk -F'= ' '{print $2}')
+      if [ -n "$md5" ] && [ "$md5" != "unknown" ]; then
+        local prior="${SUITE_RV_MD5_OWNER[$md5]:-}"
+        if [ -n "$prior" ] && [ "$prior" != "$1" ]; then
+          echo "!! W0 ABORT: riscv-dv profile '$1' produced a program BYTE-IDENTICAL to '$prior' (md5 ${md5:0:12})."
+          echo "!! Two profile names counted as one program -- exactly the FW-1b defect class. Suite aborted, not silently double-counted."
+          exit 1
+        fi
+        SUITE_RV_MD5_OWNER[$md5]="$1"
+      fi
+    fi
+  fi
+}
 # regression (Ahmad's MSCRATCH kernel-launch harness): basic verifies DUT-vs-SimX;
 # diverge/sgemm/dogfood run-to-completion co-sim but classify UNVERIFIABLE (spawn).
 runr()  { echo "=== sim-only regression PROGRAM_KIND=$1 ==="; make sim-only TEST=regression_test PROGRAM_KIND="$1" ${2:-} $CFG TIMEOUT=10000000 >"$LOGDIR/r_$1.log" 2>&1; stage $?; }
@@ -218,6 +247,19 @@ runk sim-only coalesce_probe 500000
 # csr_probe: G-1 gap-closure kernel (added 2026-09-04) -- exercises all six Zicsr forms
 # (csrrw/csrrs/csrrc/csrrwi/csrrsi/csrrci) on FRM/FFLAGS, fills the RV32Zicsr L1 bank.
 runk sim-only csr_probe 500000
+
+# simtgen (added 2026-09-09) -- original SIMT-aware random generator (S1 item),
+# divergence + memory axes. Folds OBS-059/OBS-060's isolated-merge closures
+# (cp_split_depth 4/4, cp_bank_conflict 3/3, cp_coalesce_kind 3/3) into the real
+# per-config bank for the first time -- previously verified only in isolated
+# cov/simtgen_*_20260907/ merges, never in a banked full-suite run.
+runk sim-only simtgen_smoke 200000
+for S in $(seq 1 50); do
+  runk sim-only "simtgen_div_s${S}" 200000
+done
+for S in 100 101 104 109 112 116; do
+  runk sim-only "simtgen_mem_s${S}" 200000
+done
 
 # cache_tier: the ONLY kernel that targets the SHARED hierarchy (L2 per cluster, L3
 # per GPU) rather than L1. Every other kernel's working set stays inside the socket.
