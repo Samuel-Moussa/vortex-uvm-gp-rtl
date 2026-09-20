@@ -25,6 +25,12 @@ static inline int32_t i_bge(int32_t a, int32_t b) {
                     : "=r"(r) : "r"(a), "r"(b));
   return r;
 }
+static inline int32_t i_blt(int32_t a, int32_t b) {
+  int32_t r;
+  __asm__ volatile("blt %1,%2,1f\n\tli %0,0\n\tj 2f\n\t1:\n\tli %0,1\n\t2:"
+                    : "=r"(r) : "r"(a), "r"(b));
+  return r;
+}
 static inline int32_t i_slt(int32_t a, int32_t b)
 { int32_t r; __asm__("slt %0,%1,%2" : "=r"(r) : "r"(a), "r"(b)); return r; }
 static inline int32_t i_mulh(int32_t a, int32_t b)
@@ -103,6 +109,25 @@ static inline int32_t i_sltiun(uint32_t a)
 { int32_t r; __asm__("sltiu %0,%1,-5" : "=r"(r) : "r"(a)); return r; }
 static inline int32_t i_sltiu0(uint32_t a)
 { int32_t r; __asm__("sltiu %0,%1,0"  : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_xori0(int32_t a)
+{ int32_t r; __asm__("xori %0,%1,0"   : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_lbu_off7(int8_t *p)
+{ return *(volatile uint8_t *)(p + 7); }
+// mscratch (CSR 0x340) is the one genuinely full-width read/write CSR on this
+// RTL (VX_csr_data.sv: `VX_CSR_MSCRATCH: mscratch <= write_data`, full XLEN,
+// read back verbatim) -- unlike fflags/frm, which are sub-32-bit and can never
+// carry a sign. Used only to exercise the CSR register-value sign coverpoints;
+// never read for any architectural purpose.
+static inline void i_csrrw_mscratch(int32_t v)
+{ __asm__ volatile("csrrw x0,0x340,%0" :: "r"(v)); }
+static inline int32_t i_csrwi_mscratch0(void)
+{ int32_t r; __asm__ volatile("csrrwi %0,0x340,0" : "=r"(r)); return r; }
+static inline int32_t i_csrsi_mscratch0(void)
+{ int32_t r; __asm__ volatile("csrrsi %0,0x340,0" : "=r"(r)); return r; }
+static inline int32_t i_csrci_mscratch0(void)
+{ int32_t r; __asm__ volatile("csrrci %0,0x340,0" : "=r"(r)); return r; }
+static inline int32_t i_csrs_mscratch(int32_t rs1)
+{ int32_t r; __asm__ volatile("csrrs %0,0x340,%1" : "=r"(r) : "r"(rs1)); return r; }
 
 typedef struct {
   int32_t  *a, *b;          // integer operand pairs
@@ -177,6 +202,9 @@ void fill_kernel(fill_args_t *__UNIFORM__ args) {
     acc += (ua >> sh);                                                // srl (register form, unsigned)
     acc += (uint32_t)(a | 0x123);                                     // ori
     i_nop();                                                          // nop
+    acc += (uint32_t)i_blt(au, bu);                                   // blt (warp-uniform operands)
+    acc += (uint32_t)i_blt(au, 0);                                    // blt rs2==0 (warp-uniform)
+    acc += (uint32_t)i_xori0(a);                                      // xori x,x,0
 
     // Sub-word memory. Each thread writes/reads only its own slot (no cross-thread
     // races); naturally 2-byte-aligned array so no misaligned access (MEM-4, W-10).
@@ -229,7 +257,22 @@ void fill_kernel(fill_args_t *__UNIFORM__ args) {
       i_sb_off(p8, (int8_t)(-1 - tid));                                // sb  rs2 negative
       i_fsw_off(pf, fa, 4);                                           // fsw imm=+4
       i_fsw_off(pf, fb, -4);                                          // fsw imm=-4
+      acc += (uint32_t)i_lbu_off7(p8);                                // lbu imm=+7
     }
+  }
+
+  // mscratch (see helper comment) is a SINGLE register shared by every thread
+  // in the core -- gated to tid==0 only, so this is a serial, race-free
+  // sequence with no concurrent access from any other lane.
+  if (tid == 0) {
+    i_csrrw_mscratch(-12345);
+    acc += (uint32_t)i_csrwi_mscratch0();                             // csrrwi rd=neg (old value)
+    i_csrrw_mscratch(-6789);
+    acc += (uint32_t)i_csrsi_mscratch0();                             // csrrsi rd=neg
+    i_csrrw_mscratch(-4321);
+    acc += (uint32_t)i_csrci_mscratch0();                             // csrrci rd=neg
+    acc += (uint32_t)i_csrs_mscratch(-999);                           // csrrs  rs1=neg
+    i_csrrw_mscratch(0);                                              // leave mscratch quiescent
   }
   args->out[tid] = acc;
 }
