@@ -39,6 +39,71 @@ static inline float i_fsgnjx_s(float a, float b)
 { float r; __asm__("fsgnjx.s %0,%1,%2" : "=f"(r) : "f"(a), "f"(b)); return r; }
 static inline void i_nop() { __asm__ volatile("nop"); }
 
+// ---- gap-hunt round 2 (2026-09-20): riscvISACOV cp_imm_value / cp_*_sign
+// corners left unhit by every other kernel in the suite. Each helper is one
+// forced instruction, same discipline as above. See docs/RTL_OBSERVATIONS.md
+// OBS-068 for which sibling bins are EXCLUDED instead (structural: CSR-value
+// mis-wiring, branch/jal absolute-target parsing, unsigned shamt/upper-imm
+// fields, and jal/jalr return-address/base registers always being a PC in
+// this project's fixed >=0x80000000 link base).
+static inline int32_t i_and(int32_t a, int32_t b)
+{ int32_t r; __asm__("and %0,%1,%2" : "=r"(r) : "r"(a), "r"(b)); return r; }
+static inline int32_t i_sltu(uint32_t a, uint32_t b)
+{ int32_t r; __asm__("sltu %0,%1,%2" : "=r"(r) : "r"(a), "r"(b)); return r; }
+static inline int32_t i_div(int32_t a, int32_t b)
+{ int32_t r; __asm__("div %0,%1,%2" : "=r"(r) : "r"(a), "r"(b)); return r; }
+static inline int32_t i_rem(int32_t a, int32_t b)
+{ int32_t r; __asm__("rem %0,%1,%2" : "=r"(r) : "r"(a), "r"(b)); return r; }
+static inline float i_fcvt_s_wu(uint32_t a)
+{ float r; __asm__("fcvt.s.wu %0,%1" : "=f"(r) : "r"(a)); return r; }
+static inline uint32_t i_fcvt_wu_s(float a)
+{ uint32_t r; __asm__("fcvt.wu.s %0,%1,rtz" : "=r"(r) : "f"(a)); return r; }
+static inline int32_t i_slli0(int32_t a)
+{ int32_t r; __asm__("slli %0,%1,0" : "=r"(r) : "r"(a)); return r; }
+static inline uint32_t i_srli0(uint32_t a)
+{ uint32_t r; __asm__("srli %0,%1,0" : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_srai0(int32_t a)
+{ int32_t r; __asm__("srai %0,%1,0" : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_lui0() {
+  int32_t r;
+  __asm__("lui %0,0" : "=r"(r));
+  return r;
+}
+// Pointer+constant loads/stores: the compiler reliably folds these to a single
+// insn with a nonzero encoded immediate (never a base-register recompute) for
+// a compile-time-constant displacement off a runtime base pointer.
+static inline int32_t i_lb_off(int8_t *p, int off)
+{ return off == 3 ? *(volatile int8_t *)(p + 3) : *(volatile int8_t *)(p - 3); }
+static inline int32_t i_lh_off(int16_t *p, int off)
+{ return off == 2 ? *(volatile int16_t *)(p + 2) : *(volatile int16_t *)(p - 2); }
+static inline uint32_t i_lhu_off(int16_t *p, int off)
+{ return off == 2 ? *(volatile uint16_t *)(p + 2) : *(volatile uint16_t *)(p - 2); }
+static inline void i_sh_off(int16_t *p, int16_t v, int off) {
+  if (off == 5) *(volatile int16_t *)(p + 5) = v;
+  else          *(volatile int16_t *)(p - 5) = v;
+}
+static inline void i_sb_off(int8_t *p, int8_t v) { *(volatile int8_t *)(p + 1) = v; }
+static inline void i_fsw_off(float *p, float v, int off) {
+  if (off == 4) *(volatile float *)(p + 1) = v;
+  else          *(volatile float *)(p - 1) = v;
+}
+// ALU-immediate corners: forced so the compiler cannot constant-fold the
+// literal away (it would, given a plain "x & 0" or "x | (-1)" C expression).
+static inline int32_t i_andi0(int32_t a)
+{ int32_t r; __asm__("andi %0,%1,0"   : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_orin(int32_t a)
+{ int32_t r; __asm__("ori %0,%1,-1"   : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_ori0(int32_t a)
+{ int32_t r; __asm__("ori %0,%1,0"    : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_sltin(int32_t a)
+{ int32_t r; __asm__("slti %0,%1,-5"  : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_slti0(int32_t a)
+{ int32_t r; __asm__("slti %0,%1,0"   : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_sltiun(uint32_t a)
+{ int32_t r; __asm__("sltiu %0,%1,-5" : "=r"(r) : "r"(a)); return r; }
+static inline int32_t i_sltiu0(uint32_t a)
+{ int32_t r; __asm__("sltiu %0,%1,0"  : "=r"(r) : "r"(a)); return r; }
+
 typedef struct {
   int32_t  *a, *b;          // integer operand pairs
   uint32_t *shamt;          // runtime (non-constant) shift amounts
@@ -70,6 +135,18 @@ volatile float    g_fain[NPAIR];
 volatile float    g_fbin[NPAIR];
 volatile int16_t  g_h16out[MAX_TOTAL];     // per-thread sh destination (own slot only)
 volatile uint32_t g_out[MAX_TOTAL];
+
+// Padded per-thread scratch for offset load/store gap-hunting (round 2). Each
+// thread gets its own OFF_STRIDE-wide window (widest offset used below is +/-5,
+// so a 16-element stride leaves a >=11-element no-overlap margin between any
+// two threads' windows -- a tighter 1-index-apart layout was caught here as a
+// genuine cross-thread race before it ever reached the simulator: thread N's
+// write at +5 would have landed inside thread N+1's +/-5 read/write window).
+#define OFF_STRIDE 16
+#define OFF_PAD    8
+volatile int8_t   g_off_i8 [2 * OFF_PAD + MAX_TOTAL * OFF_STRIDE];
+volatile int16_t  g_off_i16[2 * OFF_PAD + MAX_TOTAL * OFF_STRIDE];
+volatile float    g_off_f32[2 * OFF_PAD + MAX_TOTAL * OFF_STRIDE];
 
 static inline uint32_t f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
 
@@ -111,6 +188,48 @@ void fill_kernel(fill_args_t *__UNIFORM__ args) {
     float fa = args->fa[idx], fb = args->fb[idx];
     acc += (uint32_t)i_fle_s(fa, fb);                                 // fle.s
     acc += f2u(i_fsgnjx_s(fa, fb));                                   // fsgnjx.s
+
+    // ---- round 2: register/immediate-value corners (see file header) ----
+    acc += (uint32_t)i_and(a, b);                                     // and
+    acc += (uint32_t)i_sltu(ua, (uint32_t)b);                         // sltu (rs1 negative-as-unsigned)
+    acc += (uint32_t)i_div(0, (b != 0) ? b : 1);                      // div  (rs1==0)
+    acc += (uint32_t)i_rem(0, (b != 0) ? b : 1);                      // rem  (rs1==0)
+    acc += f2u(i_fcvt_s_wu(ua));                                      // fcvt.s.wu (rs1 pos, from the a/b cycle)
+    acc += f2u(i_fcvt_s_wu(0u));                                      // fcvt.s.wu (rs1==0 exactly -- never occurs in g_a)
+    acc += i_fcvt_wu_s(fa);                                           // fcvt.wu.s (rd zero, from the fa cycle's 0.0f)
+    acc += i_fcvt_wu_s(3.5e9f);                                       // fcvt.wu.s (rd >= 2^31 -- reads "neg" as int32)
+    acc += (uint32_t)i_slli0(a);                                      // slli x,x,0
+    acc += i_srli0(ua);                                               // srli x,x,0
+    acc += (uint32_t)i_srai0(a);                                      // srai x,x,0
+    acc += (uint32_t)i_lui0();                                        // lui x,0
+    acc += (uint32_t)i_andi0(a);                                      // andi x,x,0
+    acc += (uint32_t)i_orin(a);                                       // ori  x,x,-1
+    acc += (uint32_t)i_ori0(a);                                       // ori  x,x,0
+    acc += (uint32_t)i_sltin(a);                                      // slti x,x,-5
+    acc += (uint32_t)i_slti0(a);                                      // slti x,x,0
+    acc += (uint32_t)i_sltiun(ua);                                    // sltiu x,x,-5 (sign-extended imm)
+    acc += (uint32_t)i_sltiu0(ua);                                    // sltiu x,x,0
+
+    // Offset loads/stores. Own-slot base pointer, +/-N is always in-bounds
+    // thanks to OFF_PAD; g_off_i8/i16/f32 are pre-seeded with a fixed pattern
+    // in main() before any thread runs so every load reads a defined value.
+    {
+      int off_base = OFF_PAD + tid * OFF_STRIDE;
+      int8_t  *p8  = (int8_t  *)&g_off_i8 [off_base];
+      int16_t *p16 = (int16_t *)&g_off_i16[off_base];
+      float   *pf  = (float   *)&g_off_f32[off_base];
+      acc += (uint32_t)i_lb_off(p8, 3);                               // lb  imm=+3
+      acc += (uint32_t)i_lb_off(p8, -3);                              // lb  imm=-3
+      acc += (uint32_t)i_lh_off(p16, 2);                              // lh  imm=+2
+      acc += (uint32_t)i_lh_off(p16, -2);                             // lh  imm=-2
+      acc += i_lhu_off(p16, 2);                                       // lhu imm=+2
+      acc += i_lhu_off(p16, -2);                                      // lhu imm=-2
+      i_sh_off(p16, (int16_t)(0x1000 + tid), 5);                      // sh  imm=+5
+      i_sh_off(p16, (int16_t)(-1 - tid), -5);                         // sh  imm=-5
+      i_sb_off(p8, (int8_t)(-1 - tid));                                // sb  rs2 negative
+      i_fsw_off(pf, fa, 4);                                           // fsw imm=+4
+      i_fsw_off(pf, fb, -4);                                          // fsw imm=-4
+    }
   }
   args->out[tid] = acc;
 }
